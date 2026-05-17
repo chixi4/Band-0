@@ -1,0 +1,37 @@
+{
+  "purpose": "Hello World visible-text OTA demo",
+  "source_main": "extracted/main.bin",
+  "patched_main": {
+    "path": "build/firmware_1.2.5_hello_ota.bin",
+    "size": 1124256,
+    "sha256": "357c9cf541f929cee81e2a5f31e7b4a95931b9aa2fa4b052cfd0f9fb0bfb8ed1"
+  },
+  "patched_factory": {
+    "path": "build/firmware_1.2.5_hello_factory.bin",
+    "size": 1932672,
+    "sha256": "725b3752f41ec6f10dce56f26557697f37ec8a3d61c4afa522552eaee93dfa5f",
+    "patched_app_offset": "0x10000"
+  },
+  "patches": [
+    {
+      "old": "Rand/0 Pager",
+      "new": "HELLO WORLD!",
+      "count": 1
+    },
+    {
+      "old": "Scan to connect",
+      "new": "HELLO WORLD",
+      "count": 1
+    },
+    {
+      "old": "Get it running first.",
+      "new": "HELLO WORLD ON DOT!",
+      "count": 1
+    },
+    {
+      "old": "Wallpaper Updated",
+      "new": "HELLO WORLD OK",
+      "count": 1
+    }
+  ]
+}
