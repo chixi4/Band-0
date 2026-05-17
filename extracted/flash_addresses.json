@@ -1,0 +1,11 @@
+{
+    "chip":            "esp32c2",
+    "flash_size":      "2MB",
+    "flash_mode":      "dio",
+    "flash_freq":      "60m",
+    "bootloader":      "0x0",
+    "partition-table": "0x8000",
+    "otadata":         "0xd000",
+    "main":            "0x10000",
+    "updater":         "0x150000"
+}

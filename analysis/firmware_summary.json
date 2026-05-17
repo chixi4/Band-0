@@ -1,0 +1,194 @@
+{
+  "flash_addresses": {
+    "chip": "esp32c2",
+    "flash_size": "2MB",
+    "flash_mode": "dio",
+    "flash_freq": "60m",
+    "bootloader": "0x0",
+    "partition-table": "0x8000",
+    "otadata": "0xd000",
+    "main": "0x10000",
+    "updater": "0x150000"
+  },
+  "partitions": [
+    {
+      "label": "nvs",
+      "type": "data",
+      "subtype": "nvs",
+      "offset": "0x09000",
+      "size": "0x4000",
+      "size_bytes": 16384
+    },
+    {
+      "label": "otadata",
+      "type": "data",
+      "subtype": "ota",
+      "offset": "0x0d000",
+      "size": "0x2000",
+      "size_bytes": 8192
+    },
+    {
+      "label": "phy_init",
+      "type": "data",
+      "subtype": "phy",
+      "offset": "0x0f000",
+      "size": "0x1000",
+      "size_bytes": 4096
+    },
+    {
+      "label": "main",
+      "type": "app",
+      "subtype": "ota_0/main",
+      "offset": "0x10000",
+      "size": "0x140000",
+      "size_bytes": 1310720
+    },
+    {
+      "label": "updater",
+      "type": "app",
+      "subtype": "ota_1/updater",
+      "offset": "0x150000",
+      "size": "0xa0000",
+      "size_bytes": 655360
+    },
+    {
+      "label": "wp",
+      "type": "data",
+      "subtype": "custom/wp",
+      "offset": "0x1f0000",
+      "size": "0x4000",
+      "size_bytes": 16384
+    },
+    {
+      "label": "nvs_keys",
+      "type": "data",
+      "subtype": "nvs_keys",
+      "offset": "0x1f4000",
+      "size": "0x1000",
+      "size_bytes": 4096
+    }
+  ],
+  "images": {
+    "bootloader": {
+      "path": "extracted/bootloader.bin",
+      "size": 10464,
+      "sha256": "7fcd29efb539f10e151d7990adc4fa46d02148ba111d081c342190cadad660e5",
+      "segments": [
+        {
+          "load_addr": "0x3fcd5c80",
+          "file_offset": "0x000020",
+          "size": "0x74"
+        },
+        {
+          "load_addr": "0x403ac370",
+          "file_offset": "0x00009c",
+          "size": "0x8a4"
+        },
+        {
+          "load_addr": "0x403aeb70",
+          "file_offset": "0x000948",
+          "size": "0x1f6c"
+        }
+      ]
+    },
+    "main": {
+      "path": "extracted/main.bin",
+      "size": 1124256,
+      "sha256": "4aee9cff308a7496ac1f11d0be37376949b22ddcecdea333ceda120e672c872b",
+      "segments": [
+        {
+          "load_addr": "0x3c0a8020",
+          "file_offset": "0x000020",
+          "size": "0x53ae0"
+        },
+        {
+          "load_addr": "0x3fcb68c0",
+          "file_offset": "0x053b08",
+          "size": "0x140"
+        },
+        {
+          "load_addr": "0x3fcb6bf0",
+          "file_offset": "0x053c50",
+          "size": "0x1fa8"
+        },
+        {
+          "load_addr": "0x40380000",
+          "file_offset": "0x055c00",
+          "size": "0x2418"
+        },
+        {
+          "load_addr": "0x42000020",
+          "file_offset": "0x058020",
+          "size": "0xa629c"
+        },
+        {
+          "load_addr": "0x40382418",
+          "file_offset": "0x0fe2c4",
+          "size": "0xf8e4"
+        },
+        {
+          "load_addr": "0x40391d00",
+          "file_offset": "0x10dbb0",
+          "size": "0x4bc0"
+        }
+      ],
+      "header_strings": [
+        "\u0007\u0002\u001f\u00028@",
+        "\u0001 \n<:\u0005",
+        "2T",
+        "1.2.5",
+        "Quote_0_ESP8684_IDF",
+        "17:54:43",
+        "May 10 2026",
+        "v5.5.4-dirty"
+      ]
+    },
+    "updater": {
+      "path": "extracted/updater.bin",
+      "size": 556416,
+      "sha256": "2ee402087acce727cd11c2ba60526965b3394847d28a55d6282a80879f44188b",
+      "segments": [
+        {
+          "load_addr": "0x3c070020",
+          "file_offset": "0x000020",
+          "size": "0xab1c"
+        },
+        {
+          "load_addr": "0x3fcaf890",
+          "file_offset": "0x00ab44",
+          "size": "0x1e14"
+        },
+        {
+          "load_addr": "0x40380000",
+          "file_offset": "0x00c960",
+          "size": "0x36b8"
+        },
+        {
+          "load_addr": "0x42000020",
+          "file_offset": "0x010020",
+          "size": "0x6bb58"
+        },
+        {
+          "load_addr": "0x403836b8",
+          "file_offset": "0x07bb80",
+          "size": "0xc1d8"
+        }
+      ],
+      "header_strings": [
+        "\u0005\u0002\u001f\u00028@",
+        "\u0007<\u001c",
+        "2T",
+        "7206492-dirty",
+        "Quote_0_Updater",
+        "17:42:30",
+        "May 10 2026",
+        "v5.5.4-dirty"
+      ]
+    }
+  },
+  "verified_hashes": {
+    "factory": "99c3f5c449216185041b51c6023f86c4a5e17ef3e41f23913aae66002173af3d",
+    "ota_equals_main": true,
+    "separate": "0554687ef72e4532a937eed85426ffe57ff1489ebe035eb810adc5bd30c6f50e"
+  }
+}
