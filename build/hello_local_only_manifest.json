@@ -1,0 +1,95 @@
+{
+  "purpose": "Local-only cloud dependency patch",
+  "source_main": "build/firmware_1.2.5_hello_ota.bin",
+  "patched_main": {
+    "path": "build/firmware_1.2.5_hello_local_only_ota.bin",
+    "size": 1124256,
+    "sha256": "00284f63951a1422480d9e5e4342748be0066084d02e522459bb7c62ce3bc904"
+  },
+  "patched_factory": {
+    "path": "build/firmware_1.2.5_hello_local_only_factory.bin",
+    "size": 1932672,
+    "sha256": "4fc41aa7507bdf304f53a998305655bd4d2c1aa34e6b2a3bac13edac0af7a1c3",
+    "patched_app_offset": "0x10000"
+  },
+  "address_note": "Ghidra import addresses are +0x10000; patch offsets here are raw main.bin offsets.",
+  "patches": [
+    {
+      "name": "firmware_query_endpoint",
+      "kind": "C string",
+      "old": "https://dot.mindreset.tech/api/authV2/panel/device/firmware/query",
+      "new": "http://192.168.4.2:8088/fwq",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0x1a32c"
+      ]
+    },
+    {
+      "name": "ota_cdn_host",
+      "kind": "C string",
+      "old": "os-cdn.mindreset.tech",
+      "new": "192.168.4.2:8088",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0x1a400"
+      ]
+    },
+    {
+      "name": "ota_url_scheme",
+      "kind": "printf format",
+      "old": "https://%s%s%s",
+      "new": "http://%s%s%s",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0x1a418"
+      ]
+    },
+    {
+      "name": "browser_render_endpoint",
+      "kind": "embedded JS",
+      "old": "var CONVERT_API='https://dot.mindreset.tech/api/authV2/device/render/convert';",
+      "new": "var CONVERT_API='http://127.0.0.1:8088/render';",
+      "pad": "' '",
+      "count": 1,
+      "main_offsets": [
+        "0x4ae57"
+      ]
+    },
+    {
+      "name": "ntp_server_1",
+      "kind": "C string",
+      "old": "ntp.aliyun.com",
+      "new": "192.168.4.2",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0xf5c"
+      ]
+    },
+    {
+      "name": "ntp_server_2",
+      "kind": "C string",
+      "old": "time.apple.com",
+      "new": "192.168.4.2",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0xf6c"
+      ]
+    },
+    {
+      "name": "ntp_server_3",
+      "kind": "C string",
+      "old": "pool.ntp.org",
+      "new": "192.168.4.2",
+      "pad": "NUL",
+      "count": 1,
+      "main_offsets": [
+        "0xf7c"
+      ]
+    }
+  ]
+}

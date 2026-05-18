@@ -15,9 +15,15 @@
 | 文档 | 内容 |
 |---|---|
 | [`docs/REVERSE_ENGINEERING_REPORT.md`](docs/REVERSE_ENGINEERING_REPORT.md) | 主逆向报告：样本校验、分区、功能分类、硬件还原、协议、Hello World |
+| [`docs/DECOMPILATION_REPORT.md`](docs/DECOMPILATION_REPORT.md) | 反编译专项报告：Ghidra 全量输出、关键函数、可读恢复代码 |
+| [`docs/GPIO_AND_API_MAP.md`](docs/GPIO_AND_API_MAP.md) | GPIO 引脚、API 端点、业务逻辑和本地化 patch 总表 |
 | [`docs/LOCALIZATION_PLAYBOOK.md`](docs/LOCALIZATION_PLAYBOOK.md) | 脱云手册：本地图片转换、本地 OTA 服务、后续 URL patch 方向 |
 | [`docs/DEMO_CHECKLIST.md`](docs/DEMO_CHECKLIST.md) | 课堂演示清单：按顺序跑命令和讲解重点 |
+| [`docs/HARDWARE_BREAKOUT_PLAN.md`](docs/HARDWARE_BREAKOUT_PLAN.md) | 拆机/串口/下载模式验证步骤 |
 | [`analysis/firmware_summary.json`](analysis/firmware_summary.json) | 机器可读固件解析结果 |
+| [`analysis/gpio_api_inventory.json`](analysis/gpio_api_inventory.json) | 机器可读 GPIO、API、业务逻辑、补丁输出清单 |
+| [`decompiled_src/`](decompiled_src/) | 人工命名和整理后的可读恢复代码 |
+| [`reverse/`](reverse/) | ELF、objdump、Ghidra 全量反编译和字符串交叉引用 |
 
 ## 固件样本
 
@@ -59,6 +65,21 @@ esptool.py --chip esp32c2 image_info extracted/main.bin
 esptool.py --chip esp32c2 image_info extracted/updater.bin
 ```
 
+生成/查看反编译产物：
+
+```bash
+python3 tools/esp_image_to_elf.py extracted/main.bin \
+  --out reverse/elf/main.elf \
+  --meta-out reverse/elf/main_segments.json \
+  --disasm-out reverse/disasm/main_objdump.txt
+
+python3 tools/run_ghidra_decompile.py \
+  --name main_fresh \
+  --project Rand0Fresh \
+  --elf reverse/elf/main.elf \
+  --out-dir reverse/decompiled/main_fresh
+```
+
 生成 Hello World 壁纸：
 
 ```bash
@@ -75,7 +96,26 @@ esptool.py --chip esp32c2 image_info build/firmware_1.2.5_hello_ota.bin
 启动本地云原型：
 
 ```bash
-python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
+python3 tools/local_cloud.py --host 127.0.0.1 --port 8088 \
+  --public-host 192.168.4.2:8088 \
+  --firmware build/firmware_1.2.5_hello_local_only_ota.bin
+```
+
+启动本地 NTP，给完全离线校时用：
+
+```bash
+sudo python3 tools/local_ntp.py --host 0.0.0.0 --port 123
+```
+
+生成脱云固件 patch：
+
+```bash
+python3 tools/patch_local_only_firmware.py
+python3 tools/patch_local_only_firmware.py \
+  --main build/firmware_1.2.5_hello_ota.bin \
+  --main-out build/firmware_1.2.5_hello_local_only_ota.bin \
+  --factory-out build/firmware_1.2.5_hello_local_only_factory.bin \
+  --manifest-out build/hello_local_only_manifest.json
 ```
 
 ## 已完成的关键逆向结论
@@ -85,12 +125,16 @@ python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
 | MCU | ESP8684 / ESP32-C2 系列 |
 | Flash | 2 MB，DIO，60 MHz |
 | 屏幕 | JD79650 兼容 200x200 黑白电子纸，SPI，BUSY 等待 |
+| 屏幕 GPIO | BUSY=3、RST=4、CS=5、SCLK=6、MOSI=7；无独立 DC，updater 使用 SPI 1-bit command phase |
+| 按键 GPIO | 上键 GPIO8：长按退出；下键 GPIO1：长按确认；均 active-low |
+| 其他 GPIO | buzzer=GPIO10，shake/vibration input=GPIO18 |
 | 主应用 | `Quote_0_ESP8684_IDF`，版本 `1.2.5`，编译于 2026-05-10 17:54:43 |
 | 恢复应用 | `Quote_0_Updater`，负责 OTA 下载和失败恢复 |
 | 本地端点 | `/connect`、`/join`、`/status`、`/wallpaper/info`、`/wallpaper` |
 | 云端点 | `firmware/query` 和 `render/convert` |
+| 公共网络依赖 | 固件查询、OTA 下载、图片转换、NTP 均已有本地 patch/替代脚本 |
 | 壁纸格式 | `COMPRESS_ARRAY_V2` = LZ4 block + 200x200 2bpp packed bitmap |
-| Hello World | 已生成本地壁纸和校验有效的 OTA demo |
+| Hello World | 已生成本地壁纸、校验有效的 OTA demo、Hello+脱云组合 demo |
 
 ## 项目结构
 
@@ -98,14 +142,30 @@ python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
 .
 ├── docs/
 │   ├── REVERSE_ENGINEERING_REPORT.md
+│   ├── DECOMPILATION_REPORT.md
+│   ├── GPIO_AND_API_MAP.md
 │   ├── LOCALIZATION_PLAYBOOK.md
+│   ├── HARDWARE_BREAKOUT_PLAN.md
 │   └── DEMO_CHECKLIST.md
+├── decompiled_src/
+│   ├── main/
+│   └── updater/
+├── reverse/
+│   ├── elf/
+│   ├── disasm/
+│   ├── decompiled/
+│   └── xrefs/
 ├── tools/
 │   ├── firmware_report.py
 │   ├── esp32_image.py
+│   ├── esp_image_to_elf.py
+│   ├── run_ghidra_decompile.py
+│   ├── string_addr_xrefs.py
 │   ├── local_render.py
 │   ├── local_cloud.py
-│   └── patch_hello_world_ota.py
+│   ├── local_ntp.py
+│   ├── patch_hello_world_ota.py
+│   └── patch_local_only_firmware.py
 ├── analysis/
 │   ├── firmware_summary.json
 │   ├── main_strings_offsets.txt
@@ -138,8 +198,6 @@ python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
 
 ## 后续加分方向
 
-- 对 `main.bin` 做 Ghidra 交叉引用，确认 GPIO、SPI、按键、电池 ADC 细节。
-- Patch 固件中的官方 URL，让设备永久访问本地服务。
-- 在实物上验证 Hello World 壁纸上传和 Hello World OTA。
+- 在实物上通过 UART 日志和逻辑分析仪确认 UART/BOOT/EN、电池 ADC 和电源管理细节。
+- 在实物上验证 Hello World 壁纸上传、Hello+脱云 OTA 和本地 NTP 校时。
 - 后续再评估把另一个项目的屏幕 UI 和功能迁移到这个设备上。
-

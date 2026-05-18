@@ -91,14 +91,22 @@ def repair_image_footer(image: bytes | bytearray) -> bytes:
     return bytes(data)
 
 
-def patch_c_string(data: bytes | bytearray, old: bytes, new: bytes) -> tuple[bytes, int]:
+def patch_c_string(
+    data: bytes | bytearray,
+    old: bytes,
+    new: bytes,
+    *,
+    pad: bytes = b" ",
+) -> tuple[bytes, int]:
     if len(new) > len(old):
         raise ValueError(f"replacement is longer than target: {new!r} > {old!r}")
+    if len(pad) != 1:
+        raise ValueError("pad must be exactly one byte")
 
     buf = bytearray(data)
     count = 0
     start = 0
-    replacement = new + b" " * (len(old) - len(new))
+    replacement = new + pad * (len(old) - len(new))
     while True:
         pos = buf.find(old, start)
         if pos < 0:

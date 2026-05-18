@@ -1,0 +1,8 @@
+
+void FUN_ram_4205d35a(undefined4 param_1,int param_2,int param_3)
+
+{
+  FUN_ram_4205cd4e(param_1,param_2 != 0 | (param_3 != 0) << 1);
+  return;
+}
+

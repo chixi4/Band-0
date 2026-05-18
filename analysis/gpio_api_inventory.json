@@ -1,0 +1,234 @@
+{
+  "address_note": "Report addresses are true firmware addresses. Ghidra import addresses are true_address + 0x10000.",
+  "gpio": [
+    {
+      "gpio": 1,
+      "function": "lower physical button / OK",
+      "direction": "input",
+      "active": "low",
+      "evidence": [
+        "key table runtime 0x3fcb6f18 entry1: gpio=1, short_event=3, long_event=1",
+        "key_task true 0x42004a6c reads gpio_get_level(slot->gpio)",
+        "event handler true 0x4200ad14 treats event 1 long as confirm"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 3,
+      "function": "EPD BUSY",
+      "direction": "input",
+      "evidence": [
+        "main EPD config true 0x42010b2e pin_bit_mask=0x08 input",
+        "updater EPD config true 0x420079b0 pin_bit_mask=0x08 input",
+        "main busy wait true 0x42010cac reads gpio_get_level(3)"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 4,
+      "function": "EPD reset",
+      "direction": "output",
+      "evidence": [
+        "updater true 0x420079b0 toggles gpio_set_level(4, 1/0/1)",
+        "main true 0x42010b92 uses the same reset sequence"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 5,
+      "function": "EPD chip select",
+      "direction": "output",
+      "evidence": [
+        "updater spi_device_interface_config spics_io_num=5",
+        "main true 0x42010d48 toggles gpio_set_level(5, 0/1)"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 6,
+      "function": "EPD SCLK",
+      "direction": "output",
+      "evidence": [
+        "updater spi_bus_config sclk_io_num=6",
+        "main bitbang true 0x42010cda toggles GPIO6"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 7,
+      "function": "EPD MOSI/SDA",
+      "direction": "output/input during OTP read",
+      "evidence": [
+        "updater spi_bus_config mosi_io_num=7",
+        "main bitbang true 0x42010cda writes GPIO7",
+        "main read helper true 0x42010c1e samples GPIO7"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 8,
+      "function": "upper physical button / back",
+      "direction": "input",
+      "active": "low",
+      "evidence": [
+        "key table runtime 0x3fcb6f18 entry0: gpio=8, short_event=4, long_event=2",
+        "event handler true 0x4200ad14 treats event 2 long as back/exit",
+        "user observed upper long press exits"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 10,
+      "function": "buzzer",
+      "direction": "output",
+      "evidence": [
+        "buzzer_init true 0x42004f3a configures pin 10",
+        "same function calls drive capability setter with gpio=10, cap=3"
+      ],
+      "confidence": "high"
+    },
+    {
+      "gpio": 18,
+      "function": "shake / vibration input",
+      "direction": "input",
+      "evidence": [
+        "shake_chk true 0x42005976 uses gpio_config pin_bit_mask=1<<18, pull-up, interrupt type 2",
+        "same function installs ISR handler true 0x40381a6a for pin 18"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "api_endpoints": [
+    {
+      "name": "firmware_query",
+      "method": "POST",
+      "official": "https://dot.mindreset.tech/api/authV2/panel/device/firmware/query",
+      "patched": "http://192.168.4.2:8088/fwq",
+      "main_bin_offset": "0x1a32c",
+      "runtime_address": "0x3c0c232c",
+      "xref_true": "0x42013426",
+      "handler": "query_firmware_update true 0x4201339a"
+    },
+    {
+      "name": "render_convert",
+      "method": "POST",
+      "official": "https://dot.mindreset.tech/api/authV2/device/render/convert",
+      "patched": "http://127.0.0.1:8088/render",
+      "main_bin_offset": "0x4ae57",
+      "location": "embedded web UI JavaScript"
+    },
+    {
+      "name": "ota_download",
+      "method": "GET",
+      "official_host": "os-cdn.mindreset.tech",
+      "patched_host": "192.168.4.2:8088",
+      "official_format": "https://%s%s%s",
+      "patched_format": "http://%s%s%s",
+      "host_offset": "0x1a400",
+      "format_offset": "0x1a418",
+      "xref_true": "0x420136dc/0x420136e0",
+      "handler": "ota_url_builder true 0x42013682"
+    },
+    {
+      "name": "portal_root",
+      "method": "GET",
+      "path": "/",
+      "scope": "device local web server",
+      "notes": "SoftAP portal URL is also rendered as http://192.168.4.1/"
+    },
+    {
+      "name": "device_status",
+      "method": "GET",
+      "path": "/status",
+      "scope": "device local web server"
+    },
+    {
+      "name": "wifi_connect",
+      "method": "GET/POST",
+      "path": "/connect",
+      "scope": "device local web server"
+    },
+    {
+      "name": "wifi_join",
+      "method": "POST",
+      "path": "/join",
+      "scope": "device local web server"
+    },
+    {
+      "name": "wallpaper_info",
+      "method": "GET",
+      "path": "/wallpaper/info",
+      "scope": "device local web server"
+    },
+    {
+      "name": "wallpaper_upload",
+      "method": "POST/DELETE",
+      "path": "/wallpaper",
+      "scope": "device local web server"
+    },
+    {
+      "name": "ntp_time_sync",
+      "method": "SNTP/UDP",
+      "official_hosts": [
+        "ntp.aliyun.com",
+        "time.apple.com",
+        "pool.ntp.org"
+      ],
+      "patched_host": "192.168.4.2",
+      "main_bin_offsets": [
+        "0xf5c",
+        "0xf6c",
+        "0xf7c"
+      ],
+      "local_tool": "tools/local_ntp.py"
+    }
+  ],
+  "business_logic": [
+    {
+      "name": "app_main",
+      "true_address": "0x42004b52",
+      "ghidra_address": "ram:42014b52",
+      "summary": "main application initialization and mode loop"
+    },
+    {
+      "name": "key_task",
+      "true_address": "0x42004a6c",
+      "ghidra_address": "ram:42014a6c",
+      "summary": "two-button active-low scanner with 50 ms short and 800 ms long thresholds"
+    },
+    {
+      "name": "firmware_query",
+      "true_address": "0x4201339a",
+      "ghidra_address": "ram:4202339a",
+      "summary": "POST firmware query, parse needUpdate/path/query/size"
+    },
+    {
+      "name": "ota_url_builder",
+      "true_address": "0x42013682",
+      "ghidra_address": "ram:42023682",
+      "summary": "build OTA URL and write updater request"
+    },
+    {
+      "name": "updater_main",
+      "true_address": "0x420062da",
+      "ghidra_address": "ram:420162da",
+      "summary": "connect Wi-Fi, download OTA to main partition, reboot"
+    },
+    {
+      "name": "epd_jd79650_init",
+      "true_address": "0x420079b0",
+      "ghidra_address": "ram:420179b0",
+      "summary": "JD79650-compatible EPD init and SPI setup"
+    }
+  ],
+  "patched_outputs": {
+    "local_only_ota": {
+      "path": "build/firmware_1.2.5_local_only_ota.bin",
+      "sha256": "3cc312ab67673e92c52879f66623640a5bc1809523cdee2636ff10b6fec0bf56"
+    },
+    "hello_local_only_ota": {
+      "path": "build/firmware_1.2.5_hello_local_only_ota.bin",
+      "sha256": "00284f63951a1422480d9e5e4342748be0066084d02e522459bb7c62ce3bc904"
+    }
+  }
+}

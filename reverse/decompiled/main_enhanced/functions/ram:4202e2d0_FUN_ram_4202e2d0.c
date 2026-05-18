@@ -1,0 +1,11 @@
+
+void FUN_ram_4202e2d0(undefined2 param_1)
+
+{
+  undefined2 auStack_14 [8];
+  
+  auStack_14[0] = param_1;
+  FUN_ram_420332b4(0x41d,auStack_14,2,0,0);
+  return;
+}
+

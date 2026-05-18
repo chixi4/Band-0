@@ -1,0 +1,44 @@
+
+/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */
+
+void FUN_ram_42075360(undefined1 *param_1,byte *param_2,int param_3)
+
+{
+  undefined1 *puVar1;
+  uint uVar2;
+  undefined1 uVar3;
+  uint uVar4;
+  uint uVar5;
+  byte *pbVar6;
+  
+  if (-1 < (int)(_DAT_ram_3fcb0b54 << 8)) {
+    uVar4 = (*(code *)*_DAT_ram_3fcb640c)(DAT_ram_3fcb0b05);
+    DAT_ram_3fcb0b9a = (undefined1)uVar4;
+    uVar2 = uVar4 & 0xff;
+    if (0x2d < uVar4) {
+      uVar2 = 0x2d;
+    }
+    uVar4 = (uVar2 + 0x38) * 0x52;
+    DAT_ram_3fcb0b9b =
+         (*(code *)&SUB_ram_40012218)
+                   ((int)((uVar4 / ((uint)*param_2 * 10) - 8) * 0x10000) >> 0x10,*param_1,2);
+    DAT_ram_3fcb0b9c =
+         (*(code *)&SUB_ram_40012218)
+                   ((int)((uVar4 / ((uint)param_2[1] * 10) - 8) * 0x10000) >> 0x10,param_1[1],2);
+    uVar4 = 0;
+    puVar1 = &DAT_ram_3fcb0a0c;
+    do {
+      pbVar6 = (byte *)(param_3 + uVar4);
+      uVar5 = uVar4 & 1;
+      uVar4 = uVar4 + 1;
+      uVar3 = (*(code *)&SUB_ram_40012218)
+                        ((int)((((uVar2 + 0x38) * 0x334) / ((uint)*pbVar6 * 0x68) - 8) * 0x10000) >>
+                         0x10,param_1[uVar5 + 2],2);
+      puVar1[0x193] = uVar3;
+      puVar1 = puVar1 + 1;
+    } while (uVar4 != 4);
+    _DAT_ram_3fcb0b54 = _DAT_ram_3fcb0b54 | 0x800000;
+  }
+  return;
+}
+
