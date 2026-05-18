@@ -1,0 +1,63 @@
+{
+  "source": "extracted/main.bin",
+  "elf": "reverse/elf/main.elf",
+  "entry": "0x403802f4",
+  "segments": [
+    {
+      "index": 0,
+      "section": ".drom0",
+      "load_addr": "0x3c0a8020",
+      "file_offset": "0x00000020",
+      "size": "0x53ae0",
+      "flags": "alloc,load,readonly,data,contents"
+    },
+    {
+      "index": 1,
+      "section": ".dram1",
+      "load_addr": "0x3fcb68c0",
+      "file_offset": "0x00053b08",
+      "size": "0x140",
+      "flags": "alloc,load,data,contents"
+    },
+    {
+      "index": 2,
+      "section": ".dram2",
+      "load_addr": "0x3fcb6bf0",
+      "file_offset": "0x00053c50",
+      "size": "0x1fa8",
+      "flags": "alloc,load,data,contents"
+    },
+    {
+      "index": 3,
+      "section": ".iram3",
+      "load_addr": "0x40380000",
+      "file_offset": "0x00055c00",
+      "size": "0x2418",
+      "flags": "alloc,load,readonly,code,contents"
+    },
+    {
+      "index": 4,
+      "section": ".irom4",
+      "load_addr": "0x42000020",
+      "file_offset": "0x00058020",
+      "size": "0xa629c",
+      "flags": "alloc,load,readonly,code,contents"
+    },
+    {
+      "index": 5,
+      "section": ".iram5",
+      "load_addr": "0x40382418",
+      "file_offset": "0x000fe2c4",
+      "size": "0xf8e4",
+      "flags": "alloc,load,readonly,code,contents"
+    },
+    {
+      "index": 6,
+      "section": ".iram6",
+      "load_addr": "0x40391d00",
+      "file_offset": "0x0010dbb0",
+      "size": "0x4bc0",
+      "flags": "alloc,load,readonly,code,contents"
+    }
+  ]
+}

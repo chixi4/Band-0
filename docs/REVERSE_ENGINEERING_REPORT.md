@@ -24,6 +24,7 @@
 | 还原性 | SHA256、分区表、镜像 metadata、关键字符串 offset、payload 格式都有证据 | `analysis/firmware_summary.json`、`analysis/*_strings_offsets.txt` |
 | 硬件信息详细程度 | MCU、Flash、EPD 控制器、SPI/BUSY、BLE/Wi-Fi、电池、按键逻辑、VCOM 校准分级说明 | 第 4 节硬件还原表 |
 | 讲解清晰度 | 按三份固件、分区、功能、协议、演示路线组织 | `docs/DEMO_CHECKLIST.md` |
+| 反编译可读性 | Ghidra 全量反编译 + 人工命名可读恢复代码 | `reverse/decompiled/`、`decompiled_src/`、`docs/DECOMPILATION_REPORT.md` |
 | 加分项 | Hello World 壁纸、本地渲染、本地云原型、Hello World OTA demo | `tools/local_render.py`、`tools/local_cloud.py`、`tools/patch_hello_world_ota.py` |
 
 ## 1. 样本与校验
@@ -102,6 +103,20 @@ esptool.py --chip esp32c2 image_info extracted/updater.bin
 
 `main` 的入口地址为 `0x403802f4`，镜像校验和与 appended SHA-256 均有效。`updater` 镜像同样是 ESP32-C2 应用镜像。
 
+## 3.1 反编译交付物
+
+为了满足“完整代码”和“可读性”两个评分点，当前产物分两层：
+
+| 层级 | 路径 | 内容 |
+|---|---|---|
+| 全量 Ghidra 反编译 | `reverse/decompiled/main_fresh/all_functions.c` | 主应用约 17.6 万行 C-like 伪代码 |
+| 全量 Ghidra 反编译 | `reverse/decompiled/updater/all_functions.c` | updater 约 11.8 万行 C-like 伪代码 |
+| 单函数反编译 | `reverse/decompiled/*/functions/` | 每个函数独立文件，方便按地址查 |
+| 字符串交叉引用 | `reverse/xrefs/*_true.md` | 字符串、运行地址、近邻函数映射 |
+| 可读恢复代码 | `decompiled_src/` | 人工命名后的核心业务伪代码 |
+
+Ghidra 导入当前重建 ELF 时地址整体加了 `0x10000`，所以报告统一使用真实固件地址；例如真实 `0x42004b52` 在 Ghidra 文件中是 `ram:42014b52_FUN_ram_42014b52.c`。详细说明见 `docs/DECOMPILATION_REPORT.md`。
+
 ## 4. 硬件还原
 
 | 硬件/能力 | 结论 | 置信度 | 证据 |
@@ -109,16 +124,18 @@ esptool.py --chip esp32c2 image_info extracted/updater.bin
 | MCU | ESP8684 / ESP32-C2 系列 RISC-V SoC | 高 | `chip: esp32c2`、镜像 Chip ID 12、工程名 `Quote_0_ESP8684_IDF` |
 | Flash | 2 MB SPI Flash，DIO，60 MHz | 高 | `flash_addresses.json` 和镜像头 |
 | 屏幕 | JD79650 兼容 200x200 黑白电子纸 | 高 | `updater` 字符串 `init JD79650 (200x200 BW, GC LUT)` |
-| 屏幕接口 | SPI + BUSY 等待 | 高 | `spi_bus_initialize`、`spi_bus_add_device`、`wait BUSY timeout` |
+| 屏幕接口 | SPI + BUSY 等待，BUSY=GPIO3、RST=GPIO4、CS=GPIO5、SCLK=GPIO6、MOSI=GPIO7 | 高 | `0x420079b0`、`0x42010b2e` GPIO/SPI 初始化 |
 | 无线 | Wi-Fi 2.4 GHz STA + SoftAP | 高 | 配网 AP、`192.168.4.1`、NTP、HTTPS OTA 字符串 |
 | 蓝牙 | BLE HID 遥控器/翻页器 | 高 | `Starting BLE`、`BT_PAGER`、媒体键和键盘 HID 功能字符串 |
 | 存储 | NVS 保存配置，独立壁纸分区 | 高 | `nvs`、`wp` 分区，`app_config`、`ssid_1` 等键 |
 | 电池 | 有电量和充电状态显示 | 中高 | `BAT: %d%%`、`BAT: CHG`、`Battery too low` |
-| 按键 | 至少有 OK/BACK/UP/DOWN 逻辑动作 | 中 | UI 字符串出现 `Hold OK`、`BACK`、`UP`、`DOWN`；物理按键数量需拆机或 GPIO 追踪确认 |
-| 蜂鸣/震动/摇动检测 | 存在相关功能路径 | 中 | `buzzer`、`buzzer_seq`、`buzzer_soft`、`shake_chk` |
+| 按键 | 2 个物理键：GPIO8 上键/返回，GPIO1 下键/确认，均 active-low | 高 | key table `0x3fcb6f18`、`key_task` true `0x42004a6c`、用户实物确认 |
+| 蜂鸣/震动/摇动检测 | buzzer=GPIO10，shake/vibration input=GPIO18 | 高 | `buzzer` true `0x42004f3a`、`shake_chk` true `0x42005976` |
 | 屏幕 VCOM | 存在 OTP VCOM 校准读取 | 中高 | `otp_vcom`、`OTP Read OK`、`OTP Fallback` |
 
-需要强调：按键数量、具体 GPIO 引脚、电池计量芯片型号无法只靠当前固件字符串完全确定；这些需要串口日志、拆机丝印或 Ghidra 中寄存器/GPIO 初始化交叉引用继续确认。
+需要强调：GPIO1/3/4/5/6/7/8/10/18 已由反编译和结构体证据定位；电池计量芯片型号、UART 焊盘位置、BOOT/EN 焊盘仍需要实物测量。完整 GPIO 证据表见 `docs/GPIO_AND_API_MAP.md`。
+
+具体拆机、USB-UART、BOOT/EN、DAPLink 使用步骤已整理到 `docs/HARDWARE_BREAKOUT_PLAN.md`。
 
 ## 5. 功能分类
 
@@ -322,6 +339,8 @@ python3 tools/patch_hello_world_ota.py
 |---|---|---|
 | `build/firmware_1.2.5_hello_ota.bin` | `357c9cf541f929cee81e2a5f31e7b4a95931b9aa2fa4b052cfd0f9fb0bfb8ed1` | OTA app demo |
 | `build/firmware_1.2.5_hello_factory.bin` | `725b3752f41ec6f10dce56f26557697f37ec8a3d61c4afa522552eaee93dfa5f` | 合并工厂 demo |
+| `build/firmware_1.2.5_hello_local_only_ota.bin` | `00284f63951a1422480d9e5e4342748be0066084d02e522459bb7c62ce3bc904` | Hello World + 脱云 OTA demo |
+| `build/firmware_1.2.5_hello_local_only_factory.bin` | `4fc41aa7507bdf304f53a998305655bd4d2c1aa34e6b2a3bac13edac0af7a1c3` | Hello World + 脱云合并工厂 demo |
 
 补丁内容：
 
@@ -348,28 +367,34 @@ esptool.py --chip esp32c2 image_info build/firmware_1.2.5_hello_ota.bin
 
 ```bash
 esptool.py --chip esp32c2 --port /dev/ttyUSB0 read_flash 0x0 0x200000 backup_full_flash.bin
-esptool.py --chip esp32c2 --port /dev/ttyUSB0 write_flash 0x0 build/firmware_1.2.5_hello_factory.bin
+esptool.py --chip esp32c2 --port /dev/ttyUSB0 write_flash 0x0 build/firmware_1.2.5_hello_local_only_factory.bin
 ```
 
 端口名需按实际设备修改；课堂展示前必须确认这是自己的实验设备。
 
 ## 9. 本地云模拟
 
-`tools/local_cloud.py` 提供了两个官方云端点的本地替代：
+`tools/local_cloud.py` 提供了官方云端点的本地替代，并保留短路径给 patched firmware 使用：
 
 | 端点 | 本地行为 |
 |---|---|
 | `POST /api/authV2/panel/device/firmware/query` | 返回本地 Hello World OTA 信息 |
+| `POST /fwq` | 固件补丁后的短路径 OTA 查询 |
 | `POST /api/authV2/device/render/convert` | 本地完成图片转换，返回 `COMPRESS_ARRAY_V2` |
+| `POST /render` | 网页补丁后的短路径图片转换 |
 | `GET /dot/firmware/rand_0/1/<firmware>` | 提供本地 OTA 下载 |
 
 启动：
 
 ```bash
-python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
+python3 tools/local_cloud.py --host 127.0.0.1 --port 8088 \
+  --public-host 192.168.4.2:8088 \
+  --firmware build/firmware_1.2.5_hello_local_only_ota.bin
 ```
 
-因为原固件中的云地址是 HTTPS 硬编码，要让未改固件直接访问这个本地服务，还需要 hosts/DNS 劫持、端口转发或 mitmproxy。若只做课堂证明，壁纸本地转换 + 设备本地 `/wallpaper` 上传已经能证明核心脱云路径。
+未改固件仍需要 hosts/DNS 劫持、端口转发或 mitmproxy；已生成的本地化补丁固件会直接访问 `http://192.168.4.2:8088/fwq` 和 `http://%s%s%s` OTA 下载地址。完整 patch 表见 `docs/GPIO_AND_API_MAP.md`。
+
+完全离线校时使用 `tools/local_ntp.py`，local-only 固件已把 `ntp.aliyun.com`、`time.apple.com`、`pool.ntp.org` 改为 `192.168.4.2`。
 
 ## 10. 已证实与待继续
 
@@ -380,12 +405,12 @@ python3 tools/local_cloud.py --host 127.0.0.1 --port 8088
 - `main` 与 OTA 包完全一致。
 - `updater` 是独立恢复升级应用。
 - 屏幕为 JD79650 兼容 200x200 黑白电子纸。
+- GPIO 已定位：上键 GPIO8、下键 GPIO1、EPD GPIO3/4/5/6/7、buzzer GPIO10、shake GPIO18。
 - 官方图片转换 payload 可本地生成。
-- Hello World 壁纸和 Hello World OTA demo 已生成。
+- Hello World 壁纸、Hello World OTA demo、Hello+脱云组合 OTA demo 已生成并通过 esptool checksum/hash 校验；NTP 也有本地替代。
 
 待继续提高还原度：
 
-- 用 Ghidra 对 GPIO 初始化、SPI pin、按键 pin、电池 ADC pin 做交叉引用。
 - 用串口日志确认开机流程和显示刷新路径。
-- 如有实物，拆机拍摄 PCB 丝印，确认电池管理、电源芯片、按键数量。
-- 将硬编码官方 URL 进一步二进制 patch 成本地域名，或重建等价 ESP-IDF 工程。
+- 如有实物，拆机拍摄 PCB 丝印，确认电池管理、电源芯片、UART0/BOOT/EN 焊盘。
+- 重建等价 ESP-IDF 工程，让 patch 从二进制字符串补丁升级为源码级可维护固件。

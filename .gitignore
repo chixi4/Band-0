@@ -6,6 +6,13 @@
 *.etl
 *.pcapng
 
+# 构建产物（可重新生成）
+build/*.bin
+build/*.tgz
+
+# Ghidra 项目数据库（平台相关，太大）
+reverse/ghidra_projects/
+
 # Python 缓存
 __pycache__/
 *.pyc

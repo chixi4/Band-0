@@ -1,0 +1,8 @@
+
+void FUN_ram_420a564c(undefined4 param_1)
+
+{
+  (*(code *)&SUB_ram_40010488)(param_1,0,0xd8);
+  return;
+}
+

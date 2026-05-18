@@ -1,0 +1,103 @@
+
+/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */
+
+void FUN_ram_42019c6c(void)
+
+{
+  int iVar1;
+  short *psVar2;
+  byte bVar3;
+  uint uVar4;
+  uint uVar5;
+  uint uVar6;
+  undefined2 *puVar7;
+  short sVar8;
+  undefined2 *puVar9;
+  undefined2 *puVar10;
+  int iVar11;
+  uint uVar12;
+  short *psVar13;
+  
+  iVar11 = *(int *)(&DAT_ram_3c0d584c + _DAT_ram_3fcc5048 * 4);
+  for (iVar1 = 0; iVar1 < iVar11; iVar1 = iVar1 + 1) {
+    uVar4 = FUN_ram_403926c4();
+    *(char *)(iVar1 + 0x3fcbac94) = (char)(uVar4 % 6) + '\x01';
+    bVar3 = FUN_ram_403926c4();
+    *(byte *)(iVar1 + 0x3fcbac88) = bVar3 & 3;
+  }
+  if (iVar11 == 1) {
+    uVar4 = FUN_ram_403926c4();
+    _DAT_ram_3fcbaca0 = CONCAT22(_DAT_ram_3fcbaca2,(short)(uVar4 % 0x6f) + 0x14);
+    uVar4 = FUN_ram_403926c4();
+    _DAT_ram_3fcbaca0 = CONCAT22((short)(uVar4 % 0x6f) + 0x14,_DAT_ram_3fcbaca0);
+  }
+  else if (iVar11 == 3) {
+    uVar4 = FUN_ram_403926c4();
+    iVar1 = (uVar4 % 0x32) * 0xc;
+    _DAT_ram_3fcbaca0 =
+         *(undefined4 *)
+          (
+          "HwABAOsfGP8ABR84GQAFH3gZAAUf8BkABB8BGQAFHwMZAAUfBxkABR8PGQAeLx/glgAEHz8ZAAUffxkABR//GQAEHwEZAAUfAxkABT8H/8CWAAMfDzIABS8f/xoABB8/GQAID2UABD8//4B+AAMvH/8YAAM/AD/+GQAFH/wZAAUf+BkABQ/CAQUPkAEGHz/HAAQvAH8ZAAYP4AAELwB/lQAELwB+GQAFH3wZAAUPBgMeHwA+AgQ/AABAZAAFDwIA////////fwQiBw0wCrp+AAAH///4AB8AAZAHBBkAHD+ECQQZADo+w/8NCAQZADh+//8/CFED////wGQAGnztCAYZACn8/7sICBkAGL5GBwUZAE8B+Pg+GQACHAMZADHgfgfYAA8ZAAJR/////8cyAAYJCQUZAGbP+P///gOZAAF9AKb/////3/j///4PBAoFGQCTj/j///4f/+AHmwABGQBSD///+A8ZACPwB9oIBBkAo/wH+P///D//+A9eCAUZAIQG+PgfAH8D/j4JAZYAxA+D4PwA+PgfAH4B/wUKAhkAIv//GQAmHAAZAAN9AAIZADQAAH8FCgJkACSD8BkAFB/8AAIZAAEyAAFGAAXHCwYZADP7/+/DAAECAAQZAGH4APv/75gTAAICAOID4H4A8AAD8AAA+//vnBQAAQIAYwPgfgD8H0sAEd4TAAQCAAQZADv5+AcZACIB+JYAJAAHxAACAgC6f//4AAPgAAD5//8ZALQ///j/////wPn/+90AAgIAMz//8BkAGvkZABYfGQAIvAIyAAAP9AEpgPnUAg8CAP8CEgMVARYBMgMDAgADGQAWAzIDAwIABBkAUYDgAAGBpgMDAgAFGQAfcBkABR8wGQAX8gIB+DAYDAOAMD+H9/A/A3MAYGUA8wMDAAOeGBwMA4Awe8fz8PeD8wCCAEEDAAYHGQCGYODhgcHBw4MZAPMBDAMYPBgD/8DAYYHBgMMBgQwD9wEDAAwDmDYYA//AAGGBwwBjGQCCHAGMJhgDgOAZACUAwTIA8gEYAYxmEAOAMA/hgcP/4wDDlQACGQBuYjADgBh/GQDlhEMwA4AY4GGBwwADAGMyAJIMAYbDMAOAGYAZABhmGQAvwSAZAAL1AAMGweADgDmAYYHBgGMANDIA9AEGBwOB4AOAccDhgMGAwwA8GQD3AP/H3gOBwAP/4PdhwOD3gxkA7sH8A4DAA/+AfmDw8H8DYAYEAgAPGQAfFDA7AAsCAA+QEAYTAcEBDwIA/15QAAAAAAA="
+          + iVar1 + 0x1bc);
+    _DAT_ram_3fcbaca4 =
+         *(undefined4 *)
+          (
+          "HwABAOsfGP8ABR84GQAFH3gZAAUf8BkABB8BGQAFHwMZAAUfBxkABR8PGQAeLx/glgAEHz8ZAAUffxkABR//GQAEHwEZAAUfAxkABT8H/8CWAAMfDzIABS8f/xoABB8/GQAID2UABD8//4B+AAMvH/8YAAM/AD/+GQAFH/wZAAUf+BkABQ/CAQUPkAEGHz/HAAQvAH8ZAAYP4AAELwB/lQAELwB+GQAFH3wZAAUPBgMeHwA+AgQ/AABAZAAFDwIA////////fwQiBw0wCrp+AAAH///4AB8AAZAHBBkAHD+ECQQZADo+w/8NCAQZADh+//8/CFED////wGQAGnztCAYZACn8/7sICBkAGL5GBwUZAE8B+Pg+GQACHAMZADHgfgfYAA8ZAAJR/////8cyAAYJCQUZAGbP+P///gOZAAF9AKb/////3/j///4PBAoFGQCTj/j///4f/+AHmwABGQBSD///+A8ZACPwB9oIBBkAo/wH+P///D//+A9eCAUZAIQG+PgfAH8D/j4JAZYAxA+D4PwA+PgfAH4B/wUKAhkAIv//GQAmHAAZAAN9AAIZADQAAH8FCgJkACSD8BkAFB/8AAIZAAEyAAFGAAXHCwYZADP7/+/DAAECAAQZAGH4APv/75gTAAICAOID4H4A8AAD8AAA+//vnBQAAQIAYwPgfgD8H0sAEd4TAAQCAAQZADv5+AcZACIB+JYAJAAHxAACAgC6f//4AAPgAAD5//8ZALQ///j/////wPn/+90AAgIAMz//8BkAGvkZABYfGQAIvAIyAAAP9AEpgPnUAg8CAP8CEgMVARYBMgMDAgADGQAWAzIDAwIABBkAUYDgAAGBpgMDAgAFGQAfcBkABR8wGQAX8gIB+DAYDAOAMD+H9/A/A3MAYGUA8wMDAAOeGBwMA4Awe8fz8PeD8wCCAEEDAAYHGQCGYODhgcHBw4MZAPMBDAMYPBgD/8DAYYHBgMMBgQwD9wEDAAwDmDYYA//AAGGBwwBjGQCCHAGMJhgDgOAZACUAwTIA8gEYAYxmEAOAMA/hgcP/4wDDlQACGQBuYjADgBh/GQDlhEMwA4AY4GGBwwADAGMyAJIMAYbDMAOAGYAZABhmGQAvwSAZAAL1AAMGweADgDmAYYHBgGMANDIA9AEGBwOB4AOAccDhgMGAwwA8GQD3AP/H3gOBwAP/4PdhwOD3gxkA7sH8A4DAA/+AfmDw8H8DYAYEAgAPGQAfFDA7AAsCAA+QEAYTAcEBDwIA/15QAAAAAAA="
+          + iVar1 + 0x1c0);
+    _DAT_ram_3fcbaca8 =
+         *(undefined4 *)
+          (
+          "HwABAOsfGP8ABR84GQAFH3gZAAUf8BkABB8BGQAFHwMZAAUfBxkABR8PGQAeLx/glgAEHz8ZAAUffxkABR//GQAEHwEZAAUfAxkABT8H/8CWAAMfDzIABS8f/xoABB8/GQAID2UABD8//4B+AAMvH/8YAAM/AD/+GQAFH/wZAAUf+BkABQ/CAQUPkAEGHz/HAAQvAH8ZAAYP4AAELwB/lQAELwB+GQAFH3wZAAUPBgMeHwA+AgQ/AABAZAAFDwIA////////fwQiBw0wCrp+AAAH///4AB8AAZAHBBkAHD+ECQQZADo+w/8NCAQZADh+//8/CFED////wGQAGnztCAYZACn8/7sICBkAGL5GBwUZAE8B+Pg+GQACHAMZADHgfgfYAA8ZAAJR/////8cyAAYJCQUZAGbP+P///gOZAAF9AKb/////3/j///4PBAoFGQCTj/j///4f/+AHmwABGQBSD///+A8ZACPwB9oIBBkAo/wH+P///D//+A9eCAUZAIQG+PgfAH8D/j4JAZYAxA+D4PwA+PgfAH4B/wUKAhkAIv//GQAmHAAZAAN9AAIZADQAAH8FCgJkACSD8BkAFB/8AAIZAAEyAAFGAAXHCwYZADP7/+/DAAECAAQZAGH4APv/75gTAAICAOID4H4A8AAD8AAA+//vnBQAAQIAYwPgfgD8H0sAEd4TAAQCAAQZADv5+AcZACIB+JYAJAAHxAACAgC6f//4AAPgAAD5//8ZALQ///j/////wPn/+90AAgIAMz//8BkAGvkZABYfGQAIvAIyAAAP9AEpgPnUAg8CAP8CEgMVARYBMgMDAgADGQAWAzIDAwIABBkAUYDgAAGBpgMDAgAFGQAfcBkABR8wGQAX8gIB+DAYDAOAMD+H9/A/A3MAYGUA8wMDAAOeGBwMA4Awe8fz8PeD8wCCAEEDAAYHGQCGYODhgcHBw4MZAPMBDAMYPBgD/8DAYYHBgMMBgQwD9wEDAAwDmDYYA//AAGGBwwBjGQCCHAGMJhgDgOAZACUAwTIA8gEYAYxmEAOAMA/hgcP/4wDDlQACGQBuYjADgBh/GQDlhEMwA4AY4GGBwwADAGMyAJIMAYbDMAOAGYAZABhmGQAvwSAZAAL1AAMGweADgDmAYYHBgGMANDIA9AEGBwOB4AOAccDhgMGAwwA8GQD3AP/H3gOBwAP/4PdhwOD3gxkA7sH8A4DAA/+AfmDw8H8DYAYEAgAPGQAfFDA7AAsCAA+QEAYTAcEBDwIA/15QAAAAAAA="
+          + iVar1 + 0x1c4);
+  }
+  else if (iVar11 == 5) {
+    uVar4 = FUN_ram_403926c4();
+    puVar7 = (undefined2 *)(&DAT_ram_3c0d585c + (uVar4 % 0x32) * 0x14);
+    puVar9 = (undefined2 *)&DAT_ram_3fcbaca0;
+    do {
+      puVar10 = puVar9 + 2;
+      *puVar9 = *puVar7;
+      puVar9[1] = puVar7[1];
+      puVar7 = puVar7 + 2;
+      puVar9 = puVar10;
+    } while (puVar10 != (undefined2 *)0x3fcbacb4);
+  }
+  else {
+    psVar2 = (short *)&DAT_ram_3fcbaca0;
+    uVar4 = 0x12;
+    iVar1 = 0;
+    do {
+      uVar12 = 0;
+      psVar13 = psVar2;
+      do {
+        uVar5 = FUN_ram_403926c4();
+        uVar6 = FUN_ram_403926c4();
+        uVar5 = uVar5 % 5 + uVar12 + 0x12;
+        sVar8 = (short)uVar5;
+        if ((uVar5 & 0xffff) < 0x14) {
+          sVar8 = 0x14;
+        }
+        if (0x82 < sVar8) {
+          sVar8 = 0x82;
+        }
+        *psVar13 = sVar8;
+        uVar5 = uVar6 % 5 + uVar4;
+        sVar8 = (short)uVar5;
+        if ((uVar5 & 0xffff) < 0x14) {
+          sVar8 = 0x14;
+        }
+        if (0x82 < sVar8) {
+          sVar8 = 0x82;
+        }
+        psVar13[1] = sVar8;
+        uVar12 = uVar12 + 0x37 & 0xffff;
+        psVar13 = psVar13 + 2;
+      } while (uVar12 != 0xa5);
+      iVar1 = iVar1 + 3;
+      psVar2 = psVar2 + 6;
+      uVar4 = uVar4 + 0x37 & 0xffff;
+    } while (iVar1 != 9);
+  }
+  return;
+}
+

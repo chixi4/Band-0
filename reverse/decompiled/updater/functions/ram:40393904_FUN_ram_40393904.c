@@ -1,0 +1,20 @@
+
+void FUN_ram_40393904(undefined4 param_1)
+
+{
+  uint *puVar1;
+  uint uVar2;
+  uint uVar3;
+  
+  FUN_ram_40394d2c();
+  FUN_ram_40394d60();
+  puVar1 = (uint *)FUN_ram_4207ac60(param_1);
+  uVar3 = *puVar1;
+  uVar2 = FUN_ram_4207acd6(param_1);
+  *puVar1 = uVar3 | uVar2;
+  *puVar1 = ~uVar2 & *puVar1;
+  FUN_ram_40394d2c();
+  FUN_ram_40394d8e();
+  return;
+}
+

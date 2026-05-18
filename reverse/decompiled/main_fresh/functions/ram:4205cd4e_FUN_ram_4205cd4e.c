@@ -1,0 +1,19 @@
+
+undefined4 FUN_ram_4205cd4e(int param_1,undefined1 param_2)
+
+{
+  undefined4 uVar1;
+  int aiStack_38 [2];
+  undefined1 uStack_30;
+  undefined4 uStack_2c;
+  
+  if (param_1 != 0) {
+    aiStack_38[0] = param_1;
+    uStack_30 = param_2;
+    uStack_2c = FUN_ram_4205c954();
+    uVar1 = FUN_ram_4205cd16(0x4204e58c,aiStack_38);
+    return uVar1;
+  }
+  return 0xfffffff0;
+}
+

@@ -1,0 +1,20 @@
+
+bool FUN_ram_4039c32e(int *param_1,int *param_2,int param_3)
+
+{
+  int iVar1;
+  int iVar2;
+  
+  FUN_ram_4039693c();
+  iVar1 = *param_1;
+  iVar2 = *param_2;
+  if (iVar1 != iVar2) {
+    *param_2 = *param_1;
+  }
+  else {
+    *param_1 = param_3;
+  }
+  FUN_ram_40396956();
+  return iVar1 == iVar2;
+}
+

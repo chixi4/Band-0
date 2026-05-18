@@ -1,0 +1,14 @@
+
+int FUN_ram_42017d1a(uint *param_1)
+
+{
+  uint uVar1;
+  
+  if (((*param_1 & 0x7f) != 0x6f) && ((*param_1 >> 7 & 0x1f) != 0)) {
+    param_1 = (uint *)FUN_ram_40399b58();
+  }
+  uVar1 = *param_1;
+  return (((int)(uVar1 << 0xb) >> 0x1f) << 10 | ((int)(uVar1 << 0xc) >> 0x18) << 0xb |
+          (int)(uVar1 << 1) >> 0x16 | ((int)uVar1 >> 0x1f) << 0x13) << 1;
+}
+

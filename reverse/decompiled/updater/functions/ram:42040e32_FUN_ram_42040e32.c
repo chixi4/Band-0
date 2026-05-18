@@ -1,0 +1,9 @@
+
+/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */
+
+uint FUN_ram_42040e32(void)
+
+{
+  return _DAT_ram_3fcb3f90 >> 6 & 1;
+}
+

@@ -1,0 +1,47 @@
+{
+  "source": "extracted/updater.bin",
+  "elf": "reverse/elf/updater.elf",
+  "entry": "0x403802ea",
+  "segments": [
+    {
+      "index": 0,
+      "section": ".drom0",
+      "load_addr": "0x3c070020",
+      "file_offset": "0x00000020",
+      "size": "0xab1c",
+      "flags": "alloc,load,readonly,data,contents"
+    },
+    {
+      "index": 1,
+      "section": ".dram1",
+      "load_addr": "0x3fcaf890",
+      "file_offset": "0x0000ab44",
+      "size": "0x1e14",
+      "flags": "alloc,load,data,contents"
+    },
+    {
+      "index": 2,
+      "section": ".iram2",
+      "load_addr": "0x40380000",
+      "file_offset": "0x0000c960",
+      "size": "0x36b8",
+      "flags": "alloc,load,readonly,code,contents"
+    },
+    {
+      "index": 3,
+      "section": ".irom3",
+      "load_addr": "0x42000020",
+      "file_offset": "0x00010020",
+      "size": "0x6bb58",
+      "flags": "alloc,load,readonly,code,contents"
+    },
+    {
+      "index": 4,
+      "section": ".iram4",
+      "load_addr": "0x403836b8",
+      "file_offset": "0x0007bb80",
+      "size": "0xc1d8",
+      "flags": "alloc,load,readonly,code,contents"
+    }
+  ]
+}
