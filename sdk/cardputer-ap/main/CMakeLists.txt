@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        cardputer_ap_main.c
+        wifi_ap.c
+        dns_server.c
+        display_lcd.c
+        web_config.c
+    INCLUDE_DIRS
+        include
+    PRIV_REQUIRES
+        esp_wifi
+        esp_event
+        esp_netif
+        lwip
+        esp_lcd
+        driver
+        nvs_flash
+        esp_http_server
+)
