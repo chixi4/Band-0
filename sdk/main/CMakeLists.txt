@@ -1,0 +1,27 @@
+idf_component_register(
+    SRCS
+        app_main.c
+        gpio_key.c
+        buzzer.c
+        display_epd.c
+        wifi_config.c
+        wallpaper.c
+        cloud_ota.c
+        ui_render.c
+        ble_pager.c
+        nvs_utils.c
+    INCLUDE_DIRS
+        include
+    PRIV_REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        esp_http_client
+        esp_https_ota
+        nimble
+        lz4
+        cJSON
+        driver
+        esp_timer
+)

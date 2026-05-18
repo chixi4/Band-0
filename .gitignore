@@ -10,6 +10,12 @@
 build/*.bin
 build/*.tgz
 
+# ESP-IDF SDK 构建产物
+sdk/build/
+sdk/updater/build/
+sdk/sdkconfig
+sdk/updater/sdkconfig
+
 # Ghidra 项目数据库（平台相关，太大）
 reverse/ghidra_projects/
 
