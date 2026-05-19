@@ -6,6 +6,14 @@
 
 可行，但不是把 Cardputer ADV 固件直接搬过来。当前最终目标调整为：**尽量保留 Band-0 原有答案之书、签语、功德、BLE 翻页器、时钟、MBTI、设置等功能，在主菜单中新增一个 Claude Usage App**，用于查看当前 Claude 用量和周用量余额。
 
+2026-05-20 当前底座状态：
+
+- Band-0 已稳定运行 `1.2.5-rebuilt-baseline10`。
+- 网络调试和 OTA 已跑通：Mac 通过 ADV USB bridge 控制 ADV，ADV 通过 `ADV 2.4G` 和 Band-0 通信。
+- 当前默认策略是 Wi-Fi/HTTP/OTA 优先，BLE 手动启动。原因是 BLE 启动后 heap 从约 38 KB 降到约 9-12 KB，不适合常驻。
+- Claude Usage 数据已经能在设备上缓存并显示；UI 已改成白底黑字、正方形布局、大号用量百分比和 Current/Weekly 进度条。
+- 后续迁移工作不应再依赖 UART，除非要改 bootloader、分区表或 updater/recovery。
+
 源项目目标板是 ESP32-S3 + M5Cardputer/Cardputer ADV + 240x135 彩色 LCD + Arduino/M5Cardputer 库；本设备是 ESP8684/ESP32-C2 + 200x200 黑白电子纸 + ESP-IDF 固件。能复用的是协议、数据结构、仪表盘逻辑和 UI 设计语言；不能直接复用的是显示驱动、键盘输入、电源/电池 API、Arduino BLE 封装和 PlatformIO 目标板配置。
 
 ## 2. 可复用部分
@@ -98,7 +106,7 @@ ESP8684 custom main app
 - `sdk/main/debug_server.c`
 - `sdk/main/ui_render.c` 中的 `ui_draw_claude_usage()`
 - `sdk/main/include/app_config.h` 中的 `APP_MODE_CLAUDE_USAGE`
-- `tools/claude_usage_wifi_bridge.py`：复用原项目 `/api/device-payload`，经 ADV USB/Wi-Fi 推送到 Band-0。
+- `tools/adv_bridge.py`：经 ADV USB/Wi-Fi 推送 payload、触发 OTA、查询 Band-0 状态。
 
 当前构建状态：
 

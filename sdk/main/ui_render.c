@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
+#include "esp_system.h"
 #include "app_config.h"
 #include "display_epd.h"
 #include "gpio_key.h"
@@ -261,15 +262,6 @@ static int pct_for_bar(int pct)
     return pct;
 }
 
-static void pct_text(char *out, size_t out_len, int pct)
-{
-    if (pct < 0) {
-        strlcpy(out, "--%", out_len);
-    } else {
-        snprintf(out, out_len, "%d%%", pct_for_bar(pct));
-    }
-}
-
 static int text_width_px(const char *text)
 {
     return text ? (int)strlen(text) * 9 : 0;
@@ -282,6 +274,60 @@ static void draw_usage_bar(int x, int y, int w, int h, int pct)
     if (fill > 0) {
         display_fill_rounded_rect(x + 1, y + 1, fill, h - 2, 0);
     }
+}
+
+static void draw_digit_segment(int x, int y, int w, int h)
+{
+    display_fill_rounded_rect(x, y, w, h, 0);
+}
+
+static void draw_big_digit(int x, int y, int digit)
+{
+    static const uint8_t masks[10] = {
+        0x3f, /* 0: a b c d e f */
+        0x06, /* 1: b c */
+        0x5b, /* 2: a b d e g */
+        0x4f, /* 3: a b c d g */
+        0x66, /* 4: b c f g */
+        0x6d, /* 5: a c d f g */
+        0x7d, /* 6: a c d e f g */
+        0x07, /* 7: a b c */
+        0x7f, /* 8: all */
+        0x6f, /* 9: a b c d f g */
+    };
+    if (digit < 0 || digit > 9) return;
+
+    const int w = 16;
+    const int h = 28;
+    const int t = 3;
+    uint8_t m = masks[digit];
+
+    if (m & 0x01) draw_digit_segment(x + t,     y,             w - 2 * t, t);       /* a */
+    if (m & 0x02) draw_digit_segment(x + w - t, y + t,         t,         h / 2 - t); /* b */
+    if (m & 0x04) draw_digit_segment(x + w - t, y + h / 2,     t,         h / 2 - t); /* c */
+    if (m & 0x08) draw_digit_segment(x + t,     y + h - t,     w - 2 * t, t);       /* d */
+    if (m & 0x10) draw_digit_segment(x,         y + h / 2,     t,         h / 2 - t); /* e */
+    if (m & 0x20) draw_digit_segment(x,         y + t,         t,         h / 2 - t); /* f */
+    if (m & 0x40) draw_digit_segment(x + t,     y + h / 2 - 1, w - 2 * t, t);       /* g */
+}
+
+static int draw_big_pct(int x, int y, int pct)
+{
+    if (pct < 0) {
+        display_text_at(x, y + 8, "--%", TEXT_STYLE_NORMAL);
+        return x + 28;
+    }
+
+    char buf[5];
+    snprintf(buf, sizeof(buf), "%d", pct_for_bar(pct));
+
+    int cx = x;
+    for (int i = 0; buf[i] != '\0'; i++) {
+        draw_big_digit(cx, y, buf[i] - '0');
+        cx += 19;
+    }
+    display_text_at(cx + 1, y + 13, "%", TEXT_STYLE_NORMAL);
+    return cx + 12;
 }
 
 static void draw_text_clipped_style(int x, int y, const char *text, int max_chars, int style)
@@ -311,7 +357,7 @@ static void draw_clawd_logo(int x, int y)
     for (int row = 0; row < 5; row++) {
         for (int col = 0; rows[row][col] != '\0'; col++) {
             if (rows[row][col] == 'X') {
-                display_fill_rounded_rect(x + col * 2, y + row * 2, 2, 2, 0);
+                display_fill_rounded_rect(x + col * 2, y + row * 4, 2, 4, 0);
             }
         }
     }
@@ -367,12 +413,10 @@ static void draw_footer_status(const char *text)
 static void draw_usage_block(int y, const char *label, int used_pct,
                              int remaining_pct, const char *reset_text)
 {
-    char pct_buf[8];
     char detail_buf[40];
 
-    pct_text(pct_buf, sizeof(pct_buf), used_pct);
     if (remaining_pct >= 0 && reset_text && reset_text[0]) {
-        snprintf(detail_buf, sizeof(detail_buf), "%d%% left  reset %s",
+        snprintf(detail_buf, sizeof(detail_buf), "%d%% left / %s",
                  pct_for_bar(remaining_pct), reset_text);
     } else if (remaining_pct >= 0) {
         snprintf(detail_buf, sizeof(detail_buf), "%d%% left", pct_for_bar(remaining_pct));
@@ -381,11 +425,11 @@ static void draw_usage_block(int y, const char *label, int used_pct,
                  reset_text && reset_text[0] ? reset_text : "--");
     }
 
-    display_outline_rect(8, y, 184, 52);
-    display_text_at(16, y + 8, pct_buf, TEXT_STYLE_NORMAL);
-    draw_pill(128, y + 6, 54, label, false);
-    draw_usage_bar(16, y + 28, 166, 8, used_pct);
-    draw_text_clipped(16, y + 39, detail_buf, 18);
+    draw_big_pct(12, y, used_pct);
+    draw_pill(116, y + 3, 72, label, false);
+    draw_usage_bar(12, y + 34, 176, 8, used_pct);
+    draw_text_clipped(12, y + 48, detail_buf, 19);
+    display_outline_rect(12, y + 62, 176, 1);
 }
 
 void ui_draw_claude_usage(bool english)
@@ -396,8 +440,8 @@ void ui_draw_claude_usage(bool english)
 
     display_begin_frame();
 
-    draw_clawd_logo(8, 8);
-    display_text_at(62, 8, "Usage", TEXT_STYLE_NORMAL);
+    draw_clawd_logo(8, 6);
+    display_text_at(56, 10, "Usage", TEXT_STYLE_NORMAL);
 
     const bool has_problem = usage.error[0] && strcmp(usage.error, "Open bridge :8788");
     const char *badge = "WAIT";
@@ -413,23 +457,23 @@ void ui_draw_claude_usage(bool english)
         badge = "LIVE";
         filled_badge = true;
     }
-    draw_pill(138, 6, 54, badge, filled_badge);
-    display_outline_rect(8, 26, 184, 1);
+    draw_pill(138, 8, 54, badge, filled_badge);
+    display_outline_rect(8, 31, 184, 1);
 
     if (!usage.has_data) {
-        display_outline_rect(18, 48, 164, 88);
-        display_text_at(34, 60, has_problem ? "Needs attention" : "Ready to sync", TEXT_STYLE_NORMAL);
-        display_text_at(34, 80, "ADV USB + Wi-Fi", TEXT_STYLE_NORMAL);
-        display_text_at(34, 100, "localhost:8788", TEXT_STYLE_NORMAL);
-        draw_text_clipped(34, 120, usage.error[0] ? usage.error : "Open web app", 16);
+        display_text_at(22, 58, has_problem ? "Needs attention" : "Ready to sync", TEXT_STYLE_NORMAL);
+        display_outline_rect(22, 82, 156, 1);
+        display_text_at(22, 96, "ADV USB + Wi-Fi", TEXT_STYLE_NORMAL);
+        display_text_at(22, 116, "localhost:8788", TEXT_STYLE_NORMAL);
+        draw_text_clipped(22, 136, usage.error[0] ? usage.error : "Open web app", 17);
         draw_footer_status("Short key switches app");
         ui_flush_display();
         return;
     }
 
-    draw_usage_block(38, "Now", usage.current_used, usage.current_remaining,
+    draw_usage_block(41, "Current", usage.current_used, usage.current_remaining,
                      usage.current_resets_in);
-    draw_usage_block(100, "Week", usage.weekly_used, usage.weekly_remaining,
+    draw_usage_block(104, "Weekly", usage.weekly_used, usage.weekly_remaining,
                      usage.weekly_resets_in);
 
     char meta[64];
@@ -453,6 +497,34 @@ void ui_draw_claude_usage(bool english)
     } else {
         draw_footer_status(meta);
     }
+    ui_flush_display();
+}
+
+void ui_draw_safe_status(bool english)
+{
+    (void)english;
+    claude_usage_state_t usage;
+    claude_usage_get_state(&usage);
+
+    display_begin_frame();
+    display_text_at(16, 10, "BAND-0 SAFE", TEXT_STYLE_NORMAL);
+    display_outline_rect(8, 28, 184, 1);
+
+    char line[40];
+    display_text_at(12, 42, "fw", TEXT_STYLE_NORMAL);
+    draw_text_clipped(42, 42, BAND0_FIRMWARE_VERSION, 17);
+    snprintf(line, sizeof(line), "mode %d heap %luK", current_mode(),
+             (unsigned long)(esp_get_free_heap_size() / 1024));
+    display_text_at(12, 62, line, TEXT_STYLE_NORMAL);
+    snprintf(line, sizeof(line), "usage %s", usage.has_data ? usage.status : "waiting");
+    display_text_at(12, 82, line, TEXT_STYLE_NORMAL);
+    snprintf(line, sizeof(line), "src %s", usage.last_transport[0] ? usage.last_transport : "-");
+    display_text_at(12, 102, line, TEXT_STYLE_NORMAL);
+
+    display_outline_rect(8, 126, 184, 1);
+    display_text_at(12, 140, "UP hold: Usage", TEXT_STYLE_NORMAL);
+    display_text_at(12, 158, "DN hold: Redraw", TEXT_STYLE_NORMAL);
+    display_text_at(12, 176, "BOTH 10s: reboot", TEXT_STYLE_NORMAL);
     ui_flush_display();
 }
 
@@ -508,6 +580,9 @@ void ui_render_current_screen(void)
         break;
     case APP_MODE_SETUP:
         ui_draw_setup_menu(eng);
+        break;
+    case APP_MODE_SAFE_STATUS:
+        ui_draw_safe_status(eng);
         break;
     default:
         ui_draw_clock_screen(eng);

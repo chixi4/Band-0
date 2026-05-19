@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "app_config.h"
 #include "buzzer.h"
@@ -43,6 +44,15 @@ static void buzzer_worker_task(void *arg);
 int buzzer_init(void)
 {
     if (s_ready) return 0;
+
+#if !BAND0_BUZZER_ENABLED
+    gpio_reset_pin(BUZZER_GPIO);
+    gpio_set_direction(BUZZER_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(BUZZER_GPIO, 0);
+    gpio_set_drive_capability(BUZZER_GPIO, GPIO_DRIVE_CAP_0);
+    LOGI("buzzer muted on GPIO%d", BUZZER_GPIO);
+    return 0;
+#endif
 
     if (!s_lock) {
         s_lock = xSemaphoreCreateMutex();
@@ -185,11 +195,19 @@ int buzzer_play_tone(int freq_hz, int on_ms, int off_ms, int repeat)
 
 void buzzer_click(void)
 {
+#if !BAND0_BUZZER_ENABLED
+    gpio_set_level(BUZZER_GPIO, 0);
+    return;
+#endif
     buzzer_play_tone(2000, 30, 10, 1);
 }
 
 void buzzer_stop(void)
 {
+#if !BAND0_BUZZER_ENABLED
+    gpio_set_level(BUZZER_GPIO, 0);
+    return;
+#endif
     if (s_worker) {
         vTaskDelete(s_worker);
         s_worker = NULL;

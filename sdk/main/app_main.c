@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "app_config.h"
@@ -28,7 +29,9 @@
 #include "wifi_config.h"
 #include "cloud_ota.h"
 #include "ble_pager.h"
+#include "ble_usage.h"
 #include "claude_usage.h"
+#include "diag_log.h"
 #include "debug_server.h"
 #include "nvs_utils.h"
 
@@ -43,10 +46,13 @@ volatile bool      g_screen_sleeping = false;
 /* ── Forward Declarations ────────────────────────────────────── */
 static void poll_network_and_time(void);
 static void handle_mode_keys(void);
+static void handle_recovery_keys(void);
 static void delayed_startup_redraw_task(void *arg);
+static void delayed_ble_start_task(void *arg);
 
 static uint64_t g_last_activity_time = 0;
 static uint64_t g_last_tick_time = 0;
+static uint64_t g_boot_time_us = 0;
 static int g_wifi_state = -2;  /* -2=not tried, 0=STA connected, 1=portal */
 
 /* Temporary hardware bring-up pattern. It runs once on boot, then hands back to
@@ -61,7 +67,7 @@ static uint8_t g_screen_diag_1bpp[EPD_WIDTH * EPD_HEIGHT / 8];
 app_mode_t current_mode(void) { return g_current_mode; }
 void set_current_mode(app_mode_t mode)
 {
-    if (mode >= APP_MODE_ANSWERS && mode <= APP_MODE_SETUP) {
+    if (mode >= APP_MODE_ANSWERS && mode <= APP_MODE_SAFE_STATUS) {
         g_current_mode = mode;
     }
 }
@@ -147,31 +153,49 @@ static void run_screen_diag_once(void)
 }
 #endif
 
-static void display_init_task(void *arg)
-{
-    (void)arg;
-    LOGI("display init task started");
-    int ret = display_init();
-    if (ret == 0) {
-#if BAND0_SCREEN_DIAG_ON_BOOT
-        ui_clear_redraw_request();
-        run_screen_diag_once();
-#endif
-        ui_request_redraw();
-        xTaskCreate(delayed_startup_redraw_task, "startup_redraw", 2048, NULL, 3, NULL);
-        LOGI("display init task done");
-    } else {
-        LOGW("display init failed, keeping network/debug alive: %d", ret);
-    }
-    vTaskDelete(NULL);
-}
-
 static void delayed_startup_redraw_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(8000));
     ui_request_redraw();
     LOGI("startup delayed redraw requested");
+    vTaskDelete(NULL);
+}
+
+static void delayed_reboot_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(350));
+    esp_restart();
+}
+
+static void delayed_ble_start_task(void *arg)
+{
+    (void)arg;
+#if !BAND0_AUTO_START_BLE
+    LOGI("BLE auto-start disabled; use /api/ble/start when needed");
+    diag_log_event("I", "ble", "auto-start disabled");
+    vTaskDelete(NULL);
+    return;
+#endif
+
+    vTaskDelay(pdMS_TO_TICKS(12000));
+
+    uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (free_heap < 36000 || largest < 16000) {
+        LOGW("BLE deferred: heap too low free=%lu largest=%lu",
+             (unsigned long)free_heap, (unsigned long)largest);
+        diag_log_event("W", "ble", "deferred free=%lu largest=%lu",
+                       (unsigned long)free_heap, (unsigned long)largest);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int rc = ble_usage_init();
+    if (rc != 0) {
+        LOGW("BLE deferred init failed: %d", rc);
+    }
     vTaskDelete(NULL);
 }
 
@@ -209,16 +233,14 @@ static void handle_mode_keys(void)
         } else {
             /* Global key commands */
             if (ev.event == KEY_EVENT_CONFIRM && ev.is_long) {
-                /* Long press down = confirm in context */
-                if (g_current_mode == APP_MODE_MERIT) {
-                    g_config.merit_count++;
-                    LOGI("merit count: %d", g_config.merit_count);
-                    ui_request_redraw();
-                }
-            } else if (ev.event == KEY_EVENT_BACK && ev.is_long) {
-                /* Long press up = back to clock */
-                set_current_mode(APP_MODE_CLOCK);
+                /* Baseline long DOWN is a safe redraw/recovery hint. */
                 ui_request_redraw();
+                diag_log_event("I", "key", "long down redraw");
+            } else if (ev.event == KEY_EVENT_BACK && ev.is_long) {
+                /* Baseline long UP returns to the primary Usage surface. */
+                set_current_mode(APP_MODE_CLAUDE_USAGE);
+                ui_request_redraw();
+                diag_log_event("I", "key", "long up usage");
             } else if (ev.event == KEY_EVENT_NEXT && !ev.is_long) {
                 /* Short press down = next mode */
                 if (g_current_mode < APP_MODE_SETUP) {
@@ -242,6 +264,64 @@ static void handle_mode_keys(void)
     }
 }
 
+static void handle_recovery_keys(void)
+{
+    static uint64_t up_since = 0;
+    static uint64_t down_since = 0;
+    static uint64_t both_since = 0;
+    static bool startup_action_done = false;
+    static bool runtime_reboot_done = false;
+
+    uint64_t now = esp_timer_get_time();
+    bool up = gpio_key_up_pressed();
+    bool down = gpio_key_down_pressed();
+    bool both = up && down;
+
+    if (up && !up_since) up_since = now;
+    if (!up) up_since = 0;
+    if (down && !down_since) down_since = now;
+    if (!down) down_since = 0;
+    if (both && !both_since) both_since = now;
+    if (!both) {
+        both_since = 0;
+        runtime_reboot_done = false;
+    }
+
+    uint64_t boot_age = now - g_boot_time_us;
+    bool startup_window = boot_age < 15000000ULL;
+
+    if (!startup_action_done && startup_window) {
+        if (both_since && now - both_since > 8000000ULL) {
+            diag_log_event("W", "key", "startup clear OTA+reboot");
+            wifi_clear_ota_request();
+            startup_action_done = true;
+            xTaskCreate(delayed_reboot_task, "key_reboot", 2048, NULL, 6, NULL);
+            return;
+        }
+        if (up_since && !down && now - up_since > 5000000ULL) {
+            set_current_mode(APP_MODE_SAFE_STATUS);
+            ui_request_redraw();
+            diag_log_event("W", "key", "startup safe status");
+            startup_action_done = true;
+            return;
+        }
+        if (down_since && !up && now - down_since > 5000000ULL) {
+            set_current_mode(APP_MODE_CLAUDE_USAGE);
+            ui_request_redraw();
+            diag_log_event("I", "key", "startup usage");
+            startup_action_done = true;
+            return;
+        }
+    }
+
+    if (!startup_window && both_since && !runtime_reboot_done &&
+        now - both_since > 10000000ULL) {
+        runtime_reboot_done = true;
+        diag_log_event("W", "key", "runtime reboot");
+        xTaskCreate(delayed_reboot_task, "key_reboot", 2048, NULL, 6, NULL);
+    }
+}
+
 /* ── App Main ────────────────────────────────────────────────── */
 void app_main(void)
 {
@@ -251,6 +331,8 @@ void app_main(void)
     ESP_LOGI(TAG, "========================================");
 
     /* ── Initialize subsystems ──────────────────────────────── */
+    g_boot_time_us = esp_timer_get_time();
+    diag_log_event("I", "boot", "version %s", BAND0_FIRMWARE_VERSION);
     nvs_utils_init();
     int ota_cleanup = wifi_finalize_ota_request_on_main_boot();
     if (ota_cleanup > 0) {
@@ -274,11 +356,24 @@ void app_main(void)
     g_current_mode = APP_MODE_CLAUDE_USAGE;
     LOGI("boot mode pinned to Claude Usage app");
 
-    /* Initialize network/debug first so display failures cannot trap the app. */
     buzzer_init();
     wallpaper_init();
-    wifi_init();
     claude_usage_init();
+
+    int display_ret = display_init();
+    if (display_ret == 0) {
+#if BAND0_SCREEN_DIAG_ON_BOOT
+        ui_clear_redraw_request();
+        run_screen_diag_once();
+#endif
+        ui_request_redraw();
+        xTaskCreate(delayed_startup_redraw_task, "startup_redraw", 2048, NULL, 3, NULL);
+        LOGI("display init done");
+    } else {
+        LOGW("display init failed, keeping network/debug alive: %d", display_ret);
+    }
+
+    wifi_init();
     debug_server_start();
 
     /* Start key scan task */
@@ -287,15 +382,13 @@ void app_main(void)
         LOGE("key_task create failed");
     }
 
-    BaseType_t display_ok = xTaskCreate(display_init_task, "display_init", 4096, NULL, 4, NULL);
-    if (display_ok != pdPASS) {
-        LOGE("display_init task create failed");
+    BaseType_t ble_ok = xTaskCreate(delayed_ble_start_task, "ble_defer", 2048, NULL, 3, NULL);
+    if (ble_ok != pdPASS) {
+        LOGW("deferred BLE task create failed");
     }
 
-    /* Initialize BLE (deferred — started when user enters BT pager mode) */
-    /* ble_pager_init(); — called on first entry to BT pager */
-
     LOGI("All subsystems initialized");
+    diag_log_event("I", "boot", "subsystems initialized");
     buzzer_click();
     g_last_activity_time = esp_timer_get_time();
 
@@ -307,6 +400,7 @@ void app_main(void)
         /* OTA is staged explicitly through /api/ota/url and the updater app. */
 
         /* Process key events */
+        handle_recovery_keys();
         handle_mode_keys();
 
         /* Periodic 200ms tick */

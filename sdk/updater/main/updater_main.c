@@ -8,6 +8,10 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <strings.h>
+#include <sys/time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -15,10 +19,13 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_partition.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
-#include "esp_https_ota.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+#include "epd_screen.h"
 
 static const char *TAG = "updater";
 
@@ -34,6 +41,8 @@ static const char *TAG = "updater";
 #define KEY_STA_PWD  "sta.pswd"
 #define KEY_ATTEMPT  "attempt_id"
 #define KEY_RESULT   "result"
+
+static int s_current_attempt_id = 0;
 
 /* ── Updater Request ─────────────────────────────────────────── */
 typedef struct {
@@ -55,6 +64,13 @@ static int  load_updater_request(updater_request_t *req);
 static int  wifi_connect_for_ota(const char *ssid, const char *pwd, int timeout_ms);
 static void wifi_disconnect_for_ota(void);
 static int  ota_download_to_main(const char *url);
+static int  parse_http_url(const char *url, char *host, size_t host_len,
+                           char *port, size_t port_len,
+                           char *path, size_t path_len);
+static int  connect_http_socket(const char *host, const char *port);
+static int  send_all(int fd, const char *data, size_t len);
+static int  read_http_header(int fd, char *header, size_t header_len);
+static int  parse_http_header(const char *header, int *status, int *content_len);
 static void record_update_result(int attempt_id, int result, const char *reason);
 static void set_boot_partition_main(void);
 static void fail_and_reboot(const char *reason);
@@ -184,10 +200,132 @@ static void wifi_disconnect_for_ota(void)
     vTaskDelay(pdMS_TO_TICKS(500));
 }
 
+/* ── Minimal HTTP Client ─────────────────────────────────────── */
+static int parse_http_url(const char *url, char *host, size_t host_len,
+                          char *port, size_t port_len,
+                          char *path, size_t path_len)
+{
+    const char *prefix = "http://";
+    size_t prefix_len = strlen(prefix);
+    if (!url || strncmp(url, prefix, prefix_len) != 0) return -1;
+
+    const char *p = url + prefix_len;
+    const char *slash = strchr(p, '/');
+    const char *host_end = slash ? slash : url + strlen(url);
+    const char *colon = memchr(p, ':', host_end - p);
+
+    size_t h_len = (size_t)((colon ? colon : host_end) - p);
+    if (h_len == 0 || h_len >= host_len) return -1;
+    memcpy(host, p, h_len);
+    host[h_len] = '\0';
+
+    if (colon) {
+        size_t po_len = (size_t)(host_end - colon - 1);
+        if (po_len == 0 || po_len >= port_len) return -1;
+        memcpy(port, colon + 1, po_len);
+        port[po_len] = '\0';
+    } else {
+        strlcpy(port, "80", port_len);
+    }
+
+    const char *path_src = slash ? slash : "/";
+    if (strlen(path_src) >= path_len) return -1;
+    strlcpy(path, path_src, path_len);
+    return 0;
+}
+
+static int connect_http_socket(const char *host, const char *port)
+{
+    struct addrinfo hints = {
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = SOCK_STREAM,
+    };
+    struct addrinfo *res = NULL;
+    int err = getaddrinfo(host, port, &hints, &res);
+    if (err != 0 || !res) {
+        ESP_LOGE(TAG, "DNS failed for %s:%s", host, port);
+        return -1;
+    }
+
+    int fd = -1;
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+
+        struct timeval tv = {.tv_sec = 15, .tv_usec = 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) {
+            break;
+        }
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+    return fd;
+}
+
+static int send_all(int fd, const char *data, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len) {
+        int n = send(fd, data + sent, len - sent, 0);
+        if (n <= 0) return -1;
+        sent += (size_t)n;
+    }
+    return 0;
+}
+
+static int read_http_header(int fd, char *header, size_t header_len)
+{
+    if (!header || header_len < 8) return -1;
+
+    size_t n = 0;
+    while (n + 1 < header_len) {
+        char ch = 0;
+        int got = recv(fd, &ch, 1, 0);
+        if (got <= 0) return -1;
+        header[n++] = ch;
+        header[n] = '\0';
+        if (n >= 4 && memcmp(header + n - 4, "\r\n\r\n", 4) == 0) {
+            return (int)n;
+        }
+    }
+    return -1;
+}
+
+static int parse_http_header(const char *header, int *status, int *content_len)
+{
+    if (!header || !status || !content_len) return -1;
+    *status = 0;
+    *content_len = 0;
+
+    if (sscanf(header, "HTTP/%*s %d", status) != 1) return -1;
+
+    const char *line = strstr(header, "\r\n");
+    while (line) {
+        line += 2;
+        if (line[0] == '\r' && line[1] == '\n') break;
+        if (strncasecmp(line, "Content-Length:", 15) == 0) {
+            *content_len = atoi(line + 15);
+            break;
+        }
+        line = strstr(line, "\r\n");
+    }
+    return 0;
+}
+
 /* ── OTA Download ────────────────────────────────────────────── */
 static int ota_download_to_main(const char *url)
 {
-    if (!url || !*url) return -1;
+    char host[96] = {0};
+    char port[8] = {0};
+    char path[192] = {0};
+    if (parse_http_url(url, host, sizeof(host), port, sizeof(port), path, sizeof(path)) != 0) {
+        ESP_LOGE(TAG, "only local http://host[:port]/path OTA URLs are supported");
+        return 0x106;
+    }
 
     ESP_LOGI(TAG, "OTA from: %s", url);
 
@@ -198,52 +336,140 @@ static int ota_download_to_main(const char *url)
         return 0x105;
     }
 
-    esp_https_ota_config_t cfg = {
-        .http_config = &(esp_http_client_config_t){
-            .url = url,
-            .timeout_ms = 15000,
-            .keep_alive_enable = true,
-            .skip_cert_common_name_check = true,
-        },
-        .bulk_flash_erase = true,
-    };
+    int fd = connect_http_socket(host, port);
+    if (fd < 0) {
+        ESP_LOGE(TAG, "connect failed: %s:%s", host, port);
+        return 0x101;
+    }
 
-    esp_https_ota_handle_t ota = NULL;
-    esp_err_t err = esp_https_ota_begin(&cfg, &ota);
-    if (err != ESP_OK || !ota) {
-        ESP_LOGE(TAG, "esp_https_ota_begin: %s", esp_err_to_name(err));
+    char request[384];
+    int req_len = snprintf(request, sizeof(request),
+                           "GET %s HTTP/1.1\r\n"
+                           "Host: %s:%s\r\n"
+                           "User-Agent: Band-0-Updater/1.0\r\n"
+                           "Connection: close\r\n\r\n",
+                           path, host, port);
+    if (req_len <= 0 || req_len >= (int)sizeof(request) ||
+        send_all(fd, request, (size_t)req_len) != 0) {
+        ESP_LOGE(TAG, "send request failed");
+        close(fd);
+        return ESP_FAIL;
+    }
+
+    char header[768];
+    if (read_http_header(fd, header, sizeof(header)) < 0) {
+        ESP_LOGE(TAG, "read header failed");
+        close(fd);
+        return ESP_FAIL;
+    }
+
+    int status_code = 0;
+    int total = 0;
+    if (parse_http_header(header, &status_code, &total) != 0) {
+        ESP_LOGE(TAG, "bad HTTP header");
+        close(fd);
+        return 0x102;
+    }
+    if (status_code < 200 || status_code >= 300) {
+        ESP_LOGE(TAG, "http status: %d", status_code);
+        close(fd);
+        return 0x102;
+    }
+    if (total > 0 && (uint32_t)total > main->size) {
+        ESP_LOGE(TAG, "image too large: %d > %lu", total, (unsigned long)main->size);
+        close(fd);
+        return 0x107;
+    }
+
+    ESP_LOGI(TAG, "image size: %d bytes", total);
+    updater_draw_progress(0, total, "downloading");
+
+    esp_ota_handle_t ota = 0;
+    esp_err_t err = esp_ota_begin(main, total > 0 ? (size_t)total : OTA_WITH_SEQUENTIAL_WRITES, &ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin: %s", esp_err_to_name(err));
+        close(fd);
         return err;
     }
 
-    int total = esp_https_ota_get_image_size(ota);
-    ESP_LOGI(TAG, "image size: %d bytes", total);
+    char *buf = malloc(4096);
+    if (!buf) {
+        ESP_LOGE(TAG, "no OTA buffer");
+        esp_ota_abort(ota);
+        close(fd);
+        return ESP_ERR_NO_MEM;
+    }
 
+    int written = 0;
     int last_pct = -1;
-    while ((err = esp_https_ota_perform(ota)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-        int written = esp_https_ota_get_image_len_read(ota);
+    int last_screen_bucket = -1;
+    int empty_reads = 0;
+    while (true) {
+        int read = recv(fd, buf, 4096, 0);
+        if (read < 0) {
+            if (++empty_reads > 10) {
+                ESP_LOGE(TAG, "http read timeout");
+                err = ESP_ERR_TIMEOUT;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        if (read == 0) {
+            err = ESP_OK;
+            break;
+        }
+        empty_reads = 0;
+
+        err = esp_ota_write(ota, buf, read);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_ota_write: %s", esp_err_to_name(err));
+            break;
+        }
+        written += read;
+
         if (total > 0) {
             int pct = written * 100 / total;
             if (pct != last_pct && pct % 10 == 0) {
                 ESP_LOGI(TAG, "downloaded %d/%d (%d%%)", written, total, pct);
                 last_pct = pct;
             }
+            int bucket = pct / 25;
+            if (bucket != last_screen_bucket) {
+                updater_draw_progress(written, total, "downloading");
+                last_screen_bucket = bucket;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA perform: %s", esp_err_to_name(err));
-        esp_https_ota_abort(ota);
+        ESP_LOGE(TAG, "OTA download failed: %s", esp_err_to_name(err));
+        free(buf);
+        esp_ota_abort(ota);
+        close(fd);
         return err;
     }
 
-    err = esp_https_ota_finish(ota);
+    if (total > 0 && written != total) {
+        ESP_LOGE(TAG, "incomplete image: %d/%d", written, total);
+        free(buf);
+        esp_ota_abort(ota);
+        close(fd);
+        return 0x108;
+    }
+
+    err = esp_ota_end(ota);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA finish: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_ota_end: %s", esp_err_to_name(err));
+        free(buf);
+        close(fd);
         return err;
     }
 
-    int written = esp_https_ota_get_image_len_read(ota);
+    free(buf);
+    close(fd);
+    updater_draw_progress(written, written, "verified");
     ESP_LOGI(TAG, "OTA OK: %d bytes written", written);
     return 0;
 }
@@ -278,8 +504,9 @@ static void set_boot_partition_main(void)
 /* ── Fail and Reboot ─────────────────────────────────────────── */
 static void fail_and_reboot(const char *reason)
 {
-    ESP_LOGE(TAG, "FAIL: %s — rebooting to main", reason);
-    record_update_result(0, -1, reason);
+    ESP_LOGE(TAG, "FAIL: %s; rebooting to main", reason);
+    updater_draw_message(reason);
+    record_update_result(s_current_attempt_id, -1, reason);
     set_boot_partition_main();
     vTaskDelay(pdMS_TO_TICKS(1500));
     esp_restart();
@@ -289,6 +516,8 @@ static void fail_and_reboot(const char *reason)
 void app_main(void)
 {
     ESP_LOGI(TAG, "Band-0 Updater v1.2.5");
+    updater_screen_init();
+    updater_draw_message("loading request");
 
     /* Initialize NVS */
     esp_err_t err = nvs_flash_init();
@@ -306,6 +535,7 @@ void app_main(void)
     if (load_err != 0 || !req.has_url) {
         fail_and_reboot("no OTA URL");
     }
+    s_current_attempt_id = req.attempt_id;
 
     /* Try up to 3 attempts */
     for (int attempt = 1; attempt <= 3; attempt++) {
@@ -318,18 +548,21 @@ void app_main(void)
 
             if (!ssid) continue;
 
+            updater_draw_message("connecting WiFi");
             int w_err = wifi_connect_for_ota(ssid, pwd, 12000);
             if (w_err != 0) {
                 wifi_disconnect_for_ota();
                 continue;
             }
 
+            updater_draw_message("downloading");
             int ota_err = ota_download_to_main(req.url);
             wifi_disconnect_for_ota();
 
             if (ota_err == 0) {
                 record_update_result(req.attempt_id, 0, NULL);
                 set_boot_partition_main();
+                updater_draw_message("success reboot");
                 vTaskDelay(pdMS_TO_TICKS(1500));
                 ESP_LOGI(TAG, "OTA success, restarting...");
                 esp_restart();
@@ -343,5 +576,5 @@ void app_main(void)
         }
     }
 
-    fail_and_reboot("main_corrupt; reflash via USB");
+    fail_and_reboot("ota failed");
 }

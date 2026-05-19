@@ -1,16 +1,17 @@
 idf_component_register(
     SRCS
         updater_main.c
-        ota_download.c
         epd_screen.c
     INCLUDE_DIRS
         include
+        ../../main/include
     PRIV_REQUIRES
         nvs_flash
         esp_wifi
         esp_event
         esp_netif
-        esp_https_ota
+        lwip
+        app_update
         driver
         jd79650
 )

@@ -16,6 +16,7 @@
 #include "lwip/inet.h"
 #include "app_config.h"
 #include "wifi_config.h"
+#include "diag_log.h"
 
 static const char *TAG = "wifi_cfg";
 
@@ -47,6 +48,13 @@ static EventGroupHandle_t s_wifi_event_group = NULL;
 static esp_netif_t *s_sta_netif = NULL;
 static esp_netif_t *s_ap_netif = NULL;
 static int s_retry_count = 0;
+static int s_runtime_state = -2;  /* -2=not tried, 0=STA connected, 1=portal */
+
+static void log_wifi_error(const char *step, esp_err_t err)
+{
+    ESP_LOGW(TAG, "%s failed: %s", step, esp_err_to_name(err));
+    diag_log_event("W", "wifi", "%s err=%d", step, err);
+}
 
 static void configure_softap_ip(void)
 {
@@ -80,6 +88,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        diag_log_event("I", "wifi", "got ip " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -108,6 +117,7 @@ void wifi_init(void)
     s_wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_wifi_start());
     LOGI("Wi-Fi initialized");
+    diag_log_event("I", "wifi", "initialized");
 }
 
 /* ── Connect to Saved Network ────────────────────────────────── */
@@ -139,9 +149,21 @@ int wifi_connect_or_portal(void)
         }
         s_retry_count = 0;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err != ESP_OK) {
+            log_wifi_error("set STA mode", err);
+            goto start_portal;
+        }
+        err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+        if (err != ESP_OK) {
+            log_wifi_error("set STA config", err);
+            goto start_portal;
+        }
+        err = esp_wifi_connect();
+        if (err != ESP_OK) {
+            log_wifi_error("STA connect", err);
+            goto start_portal;
+        }
 
         EventBits_t bits = xEventGroupWaitBits(
             s_wifi_event_group,
@@ -151,26 +173,66 @@ int wifi_connect_or_portal(void)
 
         if (bits & WIFI_CONNECTED_BIT) {
             LOGI("Connected to Wi-Fi");
+            s_runtime_state = 0;
             return 0;
         }
         LOGW("Wi-Fi connect failed, starting SoftAP");
+        diag_log_event("W", "wifi", "STA failed, start setup AP");
     }
 
+start_portal:
     /* Fallback: start SoftAP portal */
-    esp_wifi_disconnect();
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_disconnect());
     wifi_config_t ap_cfg = {
         .ap = {
             .ssid = BAND0_AP_SSID,
             .ssid_len = strlen(BAND0_AP_SSID),
             .channel = 6,
-            .max_connection = 4,
+            .max_connection = 1,
             .authmode = WIFI_AUTH_OPEN,
         },
     };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
+    err = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (err != ESP_OK) {
+        log_wifi_error("set AP mode", err);
+        s_runtime_state = -3;
+        return -3;
+    }
+    err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
+    if (err != ESP_OK) {
+        log_wifi_error("set AP config", err);
+        s_runtime_state = -3;
+        return -3;
+    }
     LOGI("SoftAP started: '%s' at %s", BAND0_AP_SSID, BAND0_AP_IP);
+    diag_log_event("W", "wifi", "setup AP started");
+    s_runtime_state = 1;
     return 1;  /* portal mode */
+}
+
+void wifi_get_runtime_status(wifi_runtime_status_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->state = s_runtime_state;
+    out->retry_count = s_retry_count;
+    strlcpy(out->ip, "0.0.0.0", sizeof(out->ip));
+
+    EventBits_t bits = 0;
+    if (s_wifi_event_group) {
+        bits = xEventGroupGetBits(s_wifi_event_group);
+    }
+    out->sta_connected = (bits & WIFI_CONNECTED_BIT) != 0;
+    out->portal_active = s_runtime_state == 1;
+
+    if (out->sta_connected && s_sta_netif) {
+        esp_netif_ip_info_t ip_info = {0};
+        if (esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
+            snprintf(out->ip, sizeof(out->ip), IPSTR, IP2STR(&ip_info.ip));
+        }
+    } else if (out->portal_active) {
+        strlcpy(out->ip, BAND0_AP_IP, sizeof(out->ip));
+    }
 }
 
 /* ── Save OTA Request ────────────────────────────────────────── */
@@ -220,6 +282,7 @@ int wifi_save_ota_request(const ota_wifi_request_t *req)
         nvs_commit(nvs);
     }
     nvs_close(nvs);
+    diag_log_event("I", "ota", "saved request attempt=%ld", (long)attempt_id);
     return err;
 }
 
@@ -234,6 +297,7 @@ int wifi_mark_ota_reboot_armed(void)
     err = nvs_set_i32(nvs, KEY_ARMED, attempt_id);
     if (err == ESP_OK) {
         nvs_commit(nvs);
+        diag_log_event("I", "ota", "armed attempt=%ld", (long)attempt_id);
     }
     nvs_close(nvs);
     return err;
@@ -278,6 +342,7 @@ int wifi_finalize_ota_request_on_main_boot(void)
     nvs_commit(nvs);
     nvs_close(nvs);
     ESP_LOGI(TAG, "cleared completed OTA request (attempt=%ld)", (long)attempt_id);
+    diag_log_event("I", "ota", "finalized attempt=%ld", (long)attempt_id);
     return 1;
 }
 
@@ -297,5 +362,6 @@ int wifi_clear_ota_request(void)
     }
     nvs_commit(nvs);
     nvs_close(nvs);
+    diag_log_event("I", "ota", "cleared request");
     return 0;
 }

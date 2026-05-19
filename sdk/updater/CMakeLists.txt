@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.20)
 # the "updater" partition (offset 0x150000).
 
 set(EXTRA_COMPONENT_DIRS ../components)
+set(COMPONENTS main)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(Quote_0_Updater)
