@@ -7,7 +7,7 @@
  * the original firmware's updater and main app.
  *
  * Hardware interface:
- *   SPI with 1-bit command phase (no separate D/C pin)
+ *   SPI with 1-bit command phase per byte (no separate D/C pin)
  *   GPIO: BUSY=3, RST=4, CS=5, SCLK=6, MOSI=7
  *
  * Pixel format:
@@ -68,7 +68,16 @@ void jd79650_send_data(uint8_t data);
 void jd79650_send_data_bulk(const uint8_t *data, int len);
 
 /**
- * @brief Wait for BUSY pin to go low (idle).
+ * @brief Send a raw 200x200 1bpp frame through the original updater path.
+ *
+ * The source buffer is 5000 bytes, MSB-first, one bit per pixel. The original
+ * updater sends the bitwise inverse of this buffer to panel RAM; keep that
+ * behavior enabled for normal use and diagnostics.
+ */
+void jd79650_display_raw_1bpp(const uint8_t *fb, bool invert_source, const char *label);
+
+/**
+ * @brief Wait for BUSY pin to return high (ready/idle in the original firmware).
  * @param timeout_ms  Maximum wait in ms.
  * @return 0 on success, -1 on timeout.
  */

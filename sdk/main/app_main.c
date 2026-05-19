@@ -22,11 +22,14 @@
 #include "gpio_key.h"
 #include "buzzer.h"
 #include "display_epd.h"
+#include "jd79650.h"
 #include "ui_render.h"
 #include "wallpaper.h"
 #include "wifi_config.h"
 #include "cloud_ota.h"
 #include "ble_pager.h"
+#include "claude_usage.h"
+#include "debug_server.h"
 #include "nvs_utils.h"
 
 static const char *TAG = "band0";
@@ -40,13 +43,28 @@ volatile bool      g_screen_sleeping = false;
 /* ── Forward Declarations ────────────────────────────────────── */
 static void poll_network_and_time(void);
 static void handle_mode_keys(void);
+static void delayed_startup_redraw_task(void *arg);
 
 static uint64_t g_last_activity_time = 0;
 static uint64_t g_last_tick_time = 0;
+static int g_wifi_state = -2;  /* -2=not tried, 0=STA connected, 1=portal */
+
+/* Temporary hardware bring-up pattern. It runs once on boot, then hands back to
+   the normal UI so we can prove the e-paper refresh path is physically alive. */
+#define BAND0_SCREEN_DIAG_ON_BOOT 0
+
+#if BAND0_SCREEN_DIAG_ON_BOOT
+static uint8_t g_screen_diag_1bpp[EPD_WIDTH * EPD_HEIGHT / 8];
+#endif
 
 /* ── Helpers ─────────────────────────────────────────────────── */
 app_mode_t current_mode(void) { return g_current_mode; }
-void set_current_mode(app_mode_t mode) { g_current_mode = mode; }
+void set_current_mode(app_mode_t mode)
+{
+    if (mode >= APP_MODE_ANSWERS && mode <= APP_MODE_SETUP) {
+        g_current_mode = mode;
+    }
+}
 
 bool language_is_english(void) { return g_config.language != 0; }
 
@@ -90,6 +108,73 @@ void delay_ms(uint32_t ms)
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
+#if BAND0_SCREEN_DIAG_ON_BOOT
+static void run_screen_diag_once(void)
+{
+    LOGI("screen diag: raw 1bpp source 00, original invert");
+    memset(g_screen_diag_1bpp, 0x00, sizeof(g_screen_diag_1bpp));
+    jd79650_display_raw_1bpp(g_screen_diag_1bpp, true, "src00-inv");
+    delay_ms(2500);
+
+    LOGI("screen diag: raw 1bpp source ff, original invert");
+    memset(g_screen_diag_1bpp, 0xff, sizeof(g_screen_diag_1bpp));
+    jd79650_display_raw_1bpp(g_screen_diag_1bpp, true, "srcff-inv");
+    delay_ms(2500);
+
+    LOGI("screen diag: raw 1bpp checker, original invert");
+    for (int y = 0; y < EPD_HEIGHT; y++) {
+        for (int bx = 0; bx < EPD_WIDTH / 8; bx++) {
+            bool block = ((y / 20) + (bx / 3)) % 2 == 0;
+            g_screen_diag_1bpp[y * (EPD_WIDTH / 8) + bx] = block ? 0xff : 0x00;
+        }
+    }
+    jd79650_display_raw_1bpp(g_screen_diag_1bpp, true, "checker-inv");
+    delay_ms(2500);
+
+    LOGI("screen diag: raw 1bpp checker, no invert");
+    jd79650_display_raw_1bpp(g_screen_diag_1bpp, false, "checker-noinv");
+    delay_ms(2500);
+
+    LOGI("screen diag: renderer path");
+    display_begin_frame();
+    display_text_at(28, 46, "BAND-0 LOCAL", TEXT_STYLE_NORMAL);
+    display_text_at(28, 66, "EPD DRIVER OK?", TEXT_STYLE_NORMAL);
+    display_outline_rect(18, 32, 164, 58);
+    display_text_at(20, 122, "UP: GPIO8", TEXT_STYLE_NORMAL);
+    display_text_at(20, 142, "DOWN: GPIO1", TEXT_STYLE_NORMAL);
+    display_refresh();
+    delay_ms(2500);
+}
+#endif
+
+static void display_init_task(void *arg)
+{
+    (void)arg;
+    LOGI("display init task started");
+    int ret = display_init();
+    if (ret == 0) {
+#if BAND0_SCREEN_DIAG_ON_BOOT
+        ui_clear_redraw_request();
+        run_screen_diag_once();
+#endif
+        ui_request_redraw();
+        xTaskCreate(delayed_startup_redraw_task, "startup_redraw", 2048, NULL, 3, NULL);
+        LOGI("display init task done");
+    } else {
+        LOGW("display init failed, keeping network/debug alive: %d", ret);
+    }
+    vTaskDelete(NULL);
+}
+
+static void delayed_startup_redraw_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(8000));
+    ui_request_redraw();
+    LOGI("startup delayed redraw requested");
+    vTaskDelete(NULL);
+}
+
 
 
 /* ── Network / Time Sync ─────────────────────────────────────── */
@@ -97,16 +182,19 @@ static void poll_network_and_time(void)
 {
     /* Check for pending OTA/setup requests */
     pending_request_t pending = {0};
+    static bool pending_ota_logged = false;
     if (cloud_load_pending_request(&pending)) {
-        ui_draw_pending_request(&pending);
-        wifi_clear_ota_request();
+        if (!pending_ota_logged) {
+            LOGI("OTA request staged for updater; leaving NVS request intact");
+            pending_ota_logged = true;
+        }
+    } else {
+        pending_ota_logged = false;
     }
 
     /* Try connecting to Wi-Fi if not connected */
-    static bool wifi_attempted = false;
-    if (!wifi_attempted) {
-        wifi_connect_or_portal();
-        wifi_attempted = true;
+    if (g_wifi_state == -2) {
+        g_wifi_state = wifi_connect_or_portal();
     }
 }
 
@@ -159,27 +247,50 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  Band-0 (Quote_0_ESP8684_IDF)");
-    ESP_LOGI(TAG, "  Version: 1.2.5-rebuilt");
+    ESP_LOGI(TAG, "  Version: %s", BAND0_FIRMWARE_VERSION);
     ESP_LOGI(TAG, "========================================");
 
     /* ── Initialize subsystems ──────────────────────────────── */
     nvs_utils_init();
+    int ota_cleanup = wifi_finalize_ota_request_on_main_boot();
+    if (ota_cleanup > 0) {
+        LOGI("finalized stale OTA request after main boot");
+    } else if (ota_cleanup < 0) {
+        LOGW("OTA request finalization failed: %d", ota_cleanup);
+    }
     g_config = nvs_load_config();
+    bool config_changed = false;
+    if (g_config.sleep_time_seconds != 0) {
+        g_config.sleep_time_seconds = 0;  /* Keep the e-paper visible during demos/debug. */
+        config_changed = true;
+    }
+    if (g_config.boot_mode != APP_MODE_CLAUDE_USAGE) {
+        g_config.boot_mode = APP_MODE_CLAUDE_USAGE;
+        config_changed = true;
+    }
+    if (config_changed) {
+        nvs_save_config(&g_config);
+    }
+    g_current_mode = APP_MODE_CLAUDE_USAGE;
+    LOGI("boot mode pinned to Claude Usage app");
 
-    /* Initialize display early so we can show status */
-    display_init();
-    display_clear();
-    display_text(80, "Band-0", TEXT_STYLE_TITLE);
-    display_text(100, "Starting...", TEXT_STYLE_NORMAL);
-    display_refresh();
-
-    /* Initialize hardware */
+    /* Initialize network/debug first so display failures cannot trap the app. */
     buzzer_init();
     wallpaper_init();
     wifi_init();
+    claude_usage_init();
+    debug_server_start();
 
     /* Start key scan task */
-    xTaskCreate(key_task, "key_task", 2048, NULL, 10, NULL);
+    BaseType_t key_ok = xTaskCreate(key_task, "key_task", 2048, NULL, 5, NULL);
+    if (key_ok != pdPASS) {
+        LOGE("key_task create failed");
+    }
+
+    BaseType_t display_ok = xTaskCreate(display_init_task, "display_init", 4096, NULL, 4, NULL);
+    if (display_ok != pdPASS) {
+        LOGE("display_init task create failed");
+    }
 
     /* Initialize BLE (deferred — started when user enters BT pager mode) */
     /* ble_pager_init(); — called on first entry to BT pager */
@@ -193,19 +304,7 @@ void app_main(void)
         /* Poll network (non-blocking) */
         poll_network_and_time();
 
-        /* Handle pending OTA firmware query (background) */
-        static bool ota_checked = false;
-        if (!ota_checked && wifi_connect_or_portal() == 0) {
-            /* Connected to Wi-Fi, check for update */
-            firmware_query_result_t fw = {0};
-            if (cloud_query_firmware_update(&fw) == 0 && fw.need_update) {
-                LOGI("Firmware update available: %s", fw.url);
-                if (fw.url[0]) {
-                    cloud_start_ota(fw.url);
-                }
-            }
-            ota_checked = true;
-        }
+        /* OTA is staged explicitly through /api/ota/url and the updater app. */
 
         /* Process key events */
         handle_mode_keys();

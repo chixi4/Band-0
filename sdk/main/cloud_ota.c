@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
+#include "nvs_flash.h"
 #include "cJSON.h"
 #include "app_config.h"
 #include "cloud_ota.h"
@@ -224,6 +225,6 @@ bool cloud_load_pending_request(pending_request_t *out)
     out->request_type = 1;
     out->request_arg = 0;
     snprintf(out->message, sizeof(out->message),
-             "OTA URL: %s", url);
+             "OTA URL: %.86s", url);
     return true;
 }

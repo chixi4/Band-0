@@ -5,16 +5,23 @@
  * Verified against JD79650 datasheet registers.
  *
  * SPI: 20 MHz, mode 0, 1-bit command phase.
- * Command phase: cmd=0 → command, cmd=1 → data.
+ * Command phase: cmd=0 -> command, cmd=1 -> data.
  * No separate D/C GPIO.
+ *
+ * The original firmware sends every display byte as its own 9-bit SPI
+ * transaction: one command/data bit followed by eight payload bits. Do not
+ * coalesce data bytes into a single transaction or the panel stream loses the
+ * per-byte D/C bit alignment.
  */
 
 #include <string.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "jd79650.h"
 
 static const char *TAG = "jd79650";
@@ -25,16 +32,29 @@ static spi_device_handle_t s_spi = NULL;
 static bool          s_sleeping = false;
 
 /* ── SPI Transaction Helpers ─────────────────────────────────── */
-static void spi_send(uint8_t dc, const uint8_t *data, size_t len)
+static void spi_send_byte(uint8_t dc, uint8_t value)
 {
-    if (!s_spi || len == 0) return;
+    if (!s_spi) return;
 
     spi_transaction_t t = {
-        .cmd     = dc ? 1 : 0,      /* 1-bit command phase: 0=cmd, 1=data */
-        .length  = len * 8,
-        .tx_buffer = data,
+        .flags  = SPI_TRANS_USE_TXDATA,
+        .cmd    = dc ? 1 : 0,      /* 1-bit command phase: 0=cmd, 1=data */
+        .length = 8,
     };
-    spi_device_transmit(s_spi, &t);
+    t.tx_data[0] = value;
+
+    esp_err_t err = spi_device_polling_transmit(s_spi, &t);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "spi byte tx failed: %s", esp_err_to_name(err));
+    }
+}
+
+static void spi_send(uint8_t dc, const uint8_t *data, size_t len)
+{
+    if (!data || len == 0) return;
+    for (size_t i = 0; i < len; i++) {
+        spi_send_byte(dc, data[i]);
+    }
 }
 
 static void cmd(uint8_t c)
@@ -47,17 +67,64 @@ static void data(uint8_t d)
     spi_send(1, &d, 1);
 }
 
+static void data_bulk_9bit(const uint8_t *d, int len)
+{
+    if (!d || len <= 0) return;
+    for (int i = 0; i < len; i++) {
+        spi_send_byte(1, d[i]);
+    }
+}
+
+static void data_bulk_zeroes(int len)
+{
+    while (len-- > 0) {
+        spi_send_byte(1, 0x00);
+    }
+}
+
+static void data_frame_2bpp_as_1bpp(const uint8_t *fb, bool invert)
+{
+    uint8_t out[256];
+    int out_len = 0;
+
+    for (int y = 0; y < JD79650_HEIGHT; y++) {
+        for (int x = 0; x < JD79650_WIDTH; x += 8) {
+            uint8_t b = 0;
+            for (int bit = 0; bit < 8; bit++) {
+                int px = x + bit;
+                int idx = y * (JD79650_WIDTH / 4) + (px / 4);
+                int shift = 6 - 2 * (px % 4);
+                uint8_t pix = (fb[idx] >> shift) & 0x03;
+                if (pix != 0) {
+                    b |= (uint8_t)(0x80 >> bit);
+                }
+            }
+
+            out[out_len++] = invert ? (uint8_t)~b : b;
+            if (out_len == (int)sizeof(out)) {
+                data_bulk_9bit(out, out_len);
+                out_len = 0;
+            }
+        }
+    }
+
+    if (out_len > 0) {
+        data_bulk_9bit(out, out_len);
+    }
+}
+
 /* ── Busy Wait ───────────────────────────────────────────────── */
 int jd79650_wait_busy(int timeout_ms)
 {
     int64_t start = esp_timer_get_time() / 1000;
-    while (gpio_get_level(JD79650_BUSY_GPIO) != 0) {
+    while (gpio_get_level(JD79650_BUSY_GPIO) == 0) {
         int64_t elapsed = (esp_timer_get_time() / 1000) - start;
         if (elapsed > timeout_ms) {
-            ESP_LOGW(TAG, "wait BUSY timeout after %lldms", elapsed);
+            ESP_LOGW(TAG, "wait BUSY-ready timeout after %" PRId64 "ms, level=%d",
+                     elapsed, gpio_get_level(JD79650_BUSY_GPIO));
             return -1;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     return 0;
 }
@@ -66,12 +133,12 @@ int jd79650_wait_busy(int timeout_ms)
 void jd79650_reset(void)
 {
     gpio_set_level(JD79650_RST_GPIO, 1);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(1));
     gpio_set_level(JD79650_RST_GPIO, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1));
     gpio_set_level(JD79650_RST_GPIO, 1);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    jd79650_wait_busy(200);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    jd79650_wait_busy(2000);
 }
 
 /* ── LUT Write ───────────────────────────────────────────────── */
@@ -141,7 +208,7 @@ int jd79650_init(void)
 
     /* ── Send Init Sequence (from original firmware) ────────── */
     jd79650_reset();
-    jd79650_wait_busy(1000);
+    jd79650_wait_busy(2000);
 
     /* Register configuration — matched to original firmware */
     cmd(0x4D); data(0x55);
@@ -158,41 +225,41 @@ int jd79650_init(void)
     cmd(0x50); data(0x87);
     cmd(0x04);
 
-    jd79650_wait_busy(1000);
+    jd79650_wait_busy(2000);
 
     /* ── Load GC LUTs ───────────────────────────────────────── */
-    /* These are typical JD79650 GC (Global Compression) LUTs.
-       The exact values are in the original firmware's rodata. */
-    static const uint8_t LUT_GC_0[] = {
-        0x03,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    /* Exact 42-byte waveform tables recovered from updater rodata. */
+    static const uint8_t LUT_20[] = {
+        0x01,0x1e,0x1e,0x1e,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
     };
-    static const uint8_t LUT_GC_1[] = {
-        0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    static const uint8_t LUT_21[] = {
+        0x01,0x5e,0x9e,0x1e,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
     };
-    /* LUT_GC_2, LUT_GC_3, LUT_GC_4 — additional tables from original firmware */
-    static const uint8_t LUT_GC_2[64] = {0};
-    static const uint8_t LUT_GC_3[64] = {0};
-    static const uint8_t LUT_GC_4[64] = {0};
+    static const uint8_t LUT_22[] = {
+        0x01,0x5e,0x9e,0x1e,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+    };
+    static const uint8_t LUT_23[] = {
+        0x01,0x1e,0x9e,0x5e,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+    };
+    static const uint8_t LUT_24[] = {
+        0x01,0x1e,0x9e,0x5e,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+    };
 
-    jd79650_write_lut(0x20, LUT_GC_0, sizeof(LUT_GC_0));
-    jd79650_write_lut(0x21, LUT_GC_1, sizeof(LUT_GC_1));
-    jd79650_write_lut(0x22, LUT_GC_2, sizeof(LUT_GC_2));
-    jd79650_write_lut(0x23, LUT_GC_3, sizeof(LUT_GC_3));
-    jd79650_write_lut(0x24, LUT_GC_4, sizeof(LUT_GC_4));
+    jd79650_write_lut(0x20, LUT_20, sizeof(LUT_20));
+    jd79650_write_lut(0x21, LUT_21, sizeof(LUT_21));
+    jd79650_write_lut(0x22, LUT_22, sizeof(LUT_22));
+    jd79650_write_lut(0x23, LUT_23, sizeof(LUT_23));
+    jd79650_write_lut(0x24, LUT_24, sizeof(LUT_24));
 
     s_initialized = true;
     s_sleeping = false;
@@ -218,7 +285,44 @@ void jd79650_send_data(uint8_t d)
 
 void jd79650_send_data_bulk(const uint8_t *d, int len)
 {
-    spi_send(1, d, len);
+    data_bulk_9bit(d, len);
+}
+
+void jd79650_display_raw_1bpp(const uint8_t *fb, bool invert_source, const char *label)
+{
+    if (!s_initialized || !fb) return;
+
+    const int bytes = (JD79650_WIDTH * JD79650_HEIGHT) / 8;
+    ESP_LOGI(TAG, "display raw 1bpp start: %s", label ? label : "-");
+
+    cmd(0x50);
+    data(0x47);
+
+    cmd(0x10);
+    data_bulk_zeroes(bytes);
+
+    cmd(0x13);
+    uint8_t out[128];
+    int out_len = 0;
+    for (int i = 0; i < bytes; i++) {
+        out[out_len++] = invert_source ? (uint8_t)~fb[i] : fb[i];
+        if (out_len == (int)sizeof(out)) {
+            data_bulk_9bit(out, out_len);
+            out_len = 0;
+        }
+    }
+    if (out_len > 0) {
+        data_bulk_9bit(out, out_len);
+    }
+
+    int before = gpio_get_level(JD79650_BUSY_GPIO);
+    cmd(0x12);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    int after = gpio_get_level(JD79650_BUSY_GPIO);
+
+    int ret = jd79650_wait_busy(5000);
+    ESP_LOGI(TAG, "display raw 1bpp done: %s ret=%d busy before=%d after=%d final=%d",
+             label ? label : "-", ret, before, after, gpio_get_level(JD79650_BUSY_GPIO));
 }
 
 /* ── Display Frame (Full Refresh) ────────────────────────────── */
@@ -226,27 +330,29 @@ void jd79650_display_frame(const uint8_t *fb)
 {
     if (!s_initialized || !fb) return;
 
-    /* Write image data */
-    cmd(0x10);  /* Old data write */
-    for (int i = 0; i < JD79650_RAW_BYTES; i++) {
-        data(~fb[i]);  /* Invert: original expects inverted data */
-    }
+    ESP_LOGI(TAG, "display frame start");
+
+    /* Recovered updater refresh path:
+       0x50=0x47, old plane 5000 zero bytes, new plane inverted 1bpp,
+       then command 0x12 to refresh. The app renderer keeps a 2bpp buffer
+       because original wallpaper payloads are 2bpp, so convert at the edge. */
+    cmd(0x50);
+    data(0x47);
+
+    cmd(0x10);
+    data_bulk_zeroes((JD79650_WIDTH * JD79650_HEIGHT) / 8);
 
     cmd(0x13);  /* New data write */
-    for (int i = 0; i < JD79650_RAW_BYTES; i++) {
-        data(fb[i]);
-    }
+    data_frame_2bpp_as_1bpp(fb, true);
 
-    /* Trigger display refresh */
-    cmd(0x11);  data(0x03);  /* GC mode with full refresh */
-    cmd(0x44);  data(0); data(7);  /* X start/end */
-    cmd(0x45);  data(0); data(0);  /* Y start/end */
-    cmd(0x4E);  data(0);           /* X RAM address */
-    cmd(0x4F);  data(0); data(0);  /* Y RAM address */
-    cmd(0x22);  data(0xC7);        /* Display update control */
-    cmd(0x20);                      /* Activate */
+    int before = gpio_get_level(JD79650_BUSY_GPIO);
+    cmd(0x12);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    int after = gpio_get_level(JD79650_BUSY_GPIO);
 
-    jd79650_wait_busy(5000);
+    int ret = jd79650_wait_busy(5000);
+    ESP_LOGI(TAG, "display frame done: %d, busy before=%d after=%d final=%d",
+             ret, before, after, gpio_get_level(JD79650_BUSY_GPIO));
 }
 
 /* ── Partial Refresh ─────────────────────────────────────────── */

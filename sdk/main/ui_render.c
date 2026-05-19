@@ -14,13 +14,14 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include "esp_log.h"
 #include "app_config.h"
 #include "display_epd.h"
+#include "gpio_key.h"
 #include "wallpaper.h"
 #include "ui_render.h"
-
-static const char *TAG = "ui";
+#include "claude_usage.h"
 
 /* ── Global Redraw Flag ──────────────────────────────────────── */
 static bool s_redraw_requested = true;
@@ -213,7 +214,7 @@ void ui_draw_mbti_guide(bool english)
     int col = 0, row_y = y;
     for (int i = 0; i < 16; i++) {
         int x = 10 + col * 48;
-        display_text(row_y, types[i], TEXT_STYLE_NORMAL);
+        display_text_at(x, row_y, types[i], TEXT_STYLE_NORMAL);
         col++;
         if (col >= 4) {
             col = 0;
@@ -252,6 +253,209 @@ void ui_draw_bt_pager(bool english)
     ui_flush_display();
 }
 
+/* ── Screen: Claude Usage ───────────────────────────────────── */
+static int pct_for_bar(int pct)
+{
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+}
+
+static void pct_text(char *out, size_t out_len, int pct)
+{
+    if (pct < 0) {
+        strlcpy(out, "--%", out_len);
+    } else {
+        snprintf(out, out_len, "%d%%", pct_for_bar(pct));
+    }
+}
+
+static int text_width_px(const char *text)
+{
+    return text ? (int)strlen(text) * 9 : 0;
+}
+
+static void draw_usage_bar(int x, int y, int w, int h, int pct)
+{
+    int fill = (w - 2) * pct_for_bar(pct) / 100;
+    display_outline_rect(x, y, w, h);
+    if (fill > 0) {
+        display_fill_rounded_rect(x + 1, y + 1, fill, h - 2, 0);
+    }
+}
+
+static void draw_text_clipped_style(int x, int y, const char *text, int max_chars, int style)
+{
+    char buf[44];
+    if (!text) text = "";
+    if (max_chars > (int)sizeof(buf) - 1) max_chars = sizeof(buf) - 1;
+    strlcpy(buf, text, (size_t)max_chars + 1);
+    display_text_at(x, y, buf, style);
+}
+
+static void draw_text_clipped(int x, int y, const char *text, int max_chars)
+{
+    draw_text_clipped_style(x, y, text, max_chars, TEXT_STYLE_NORMAL);
+}
+
+static void draw_clawd_logo(int x, int y)
+{
+    static const char *rows[] = {
+        "...XXXXXXXXXXXX...",
+        "...XX.XXXXXX.XX...",
+        ".XXXXXXXXXXXXXXXX.",
+        "...XXXXXXXXXXXX...",
+        "....X.X....X.X....",
+    };
+
+    for (int row = 0; row < 5; row++) {
+        for (int col = 0; rows[row][col] != '\0'; col++) {
+            if (rows[row][col] == 'X') {
+                display_fill_rounded_rect(x + col * 2, y + row * 2, 2, 2, 0);
+            }
+        }
+    }
+}
+
+static void draw_spark(int x, int y)
+{
+    display_fill_rounded_rect(x, y, 2, 2, 0);
+    display_fill_rounded_rect(x - 5, y, 3, 1, 0);
+    display_fill_rounded_rect(x + 4, y, 3, 1, 0);
+    display_fill_rounded_rect(x, y - 5, 1, 3, 0);
+    display_fill_rounded_rect(x, y + 4, 1, 3, 0);
+    display_fill_rounded_rect(x - 4, y - 4, 2, 2, 0);
+    display_fill_rounded_rect(x + 4, y - 4, 2, 2, 0);
+    display_fill_rounded_rect(x - 4, y + 4, 2, 2, 0);
+    display_fill_rounded_rect(x + 4, y + 4, 2, 2, 0);
+}
+
+static void draw_pill(int x, int y, int w, const char *label, bool filled)
+{
+    int label_w = text_width_px(label);
+    int tx = x + (w - label_w) / 2;
+    if (tx < x + 2) tx = x + 2;
+
+    if (filled) {
+        display_fill_rounded_rect(x, y, w, 16, 3);
+        draw_text_clipped_style(tx, y + 2, label, (w - 4) / 9, TEXT_STYLE_INVERTED);
+    } else {
+        display_outline_rect(x, y, w, 16);
+        draw_text_clipped(tx, y + 2, label, (w - 4) / 9);
+    }
+}
+
+static void draw_footer_status(const char *text)
+{
+    char buf[24];
+    strlcpy(buf, text && text[0] ? text : "Waiting for bridge", sizeof(buf));
+    int max_chars = 20;
+    if ((int)strlen(buf) > max_chars) {
+        buf[max_chars - 1] = '.';
+        buf[max_chars] = '\0';
+    }
+
+    int w = text_width_px(buf) + 16;
+    int x = (EPD_WIDTH - w) / 2;
+    if (x < 8) x = 8;
+
+    display_outline_rect(8, 174, 184, 1);
+    draw_spark(x + 4, 187);
+    display_text_at(x + 14, 181, buf, TEXT_STYLE_NORMAL);
+}
+
+static void draw_usage_block(int y, const char *label, int used_pct,
+                             int remaining_pct, const char *reset_text)
+{
+    char pct_buf[8];
+    char detail_buf[40];
+
+    pct_text(pct_buf, sizeof(pct_buf), used_pct);
+    if (remaining_pct >= 0 && reset_text && reset_text[0]) {
+        snprintf(detail_buf, sizeof(detail_buf), "%d%% left  reset %s",
+                 pct_for_bar(remaining_pct), reset_text);
+    } else if (remaining_pct >= 0) {
+        snprintf(detail_buf, sizeof(detail_buf), "%d%% left", pct_for_bar(remaining_pct));
+    } else {
+        snprintf(detail_buf, sizeof(detail_buf), "resets in %s",
+                 reset_text && reset_text[0] ? reset_text : "--");
+    }
+
+    display_outline_rect(8, y, 184, 52);
+    display_text_at(16, y + 8, pct_buf, TEXT_STYLE_NORMAL);
+    draw_pill(128, y + 6, 54, label, false);
+    draw_usage_bar(16, y + 28, 166, 8, used_pct);
+    draw_text_clipped(16, y + 39, detail_buf, 18);
+}
+
+void ui_draw_claude_usage(bool english)
+{
+    (void)english;
+    claude_usage_state_t usage;
+    claude_usage_get_state(&usage);
+
+    display_begin_frame();
+
+    draw_clawd_logo(8, 8);
+    display_text_at(62, 8, "Usage", TEXT_STYLE_NORMAL);
+
+    const bool has_problem = usage.error[0] && strcmp(usage.error, "Open bridge :8788");
+    const char *badge = "WAIT";
+    bool filled_badge = false;
+    if (has_problem) {
+        badge = "ERROR";
+        filled_badge = true;
+    } else if (usage.stale) {
+        badge = "STALE";
+    } else if (usage.is_demo) {
+        badge = "DEMO";
+    } else if (usage.has_data) {
+        badge = "LIVE";
+        filled_badge = true;
+    }
+    draw_pill(138, 6, 54, badge, filled_badge);
+    display_outline_rect(8, 26, 184, 1);
+
+    if (!usage.has_data) {
+        display_outline_rect(18, 48, 164, 88);
+        display_text_at(34, 60, has_problem ? "Needs attention" : "Ready to sync", TEXT_STYLE_NORMAL);
+        display_text_at(34, 80, "ADV USB + Wi-Fi", TEXT_STYLE_NORMAL);
+        display_text_at(34, 100, "localhost:8788", TEXT_STYLE_NORMAL);
+        draw_text_clipped(34, 120, usage.error[0] ? usage.error : "Open web app", 16);
+        draw_footer_status("Short key switches app");
+        ui_flush_display();
+        return;
+    }
+
+    draw_usage_block(38, "Now", usage.current_used, usage.current_remaining,
+                     usage.current_resets_in);
+    draw_usage_block(100, "Week", usage.weekly_used, usage.weekly_remaining,
+                     usage.weekly_resets_in);
+
+    char meta[64];
+    if (has_problem) {
+        snprintf(meta, sizeof(meta), "%s", usage.error);
+    } else if (usage.stale) {
+        snprintf(meta, sizeof(meta), "Cached  %s", usage.source[0] ? usage.source : usage.status);
+    } else if (usage.is_demo) {
+        snprintf(meta, sizeof(meta), "Demo  %s", usage.model[0] ? usage.model : usage.status);
+    } else {
+        snprintf(meta, sizeof(meta), "%s via %s",
+                 usage.model[0] ? usage.model : "live",
+                 usage.source[0] ? usage.source : usage.last_transport);
+    }
+
+    if (usage.age_seconds >= 0 && !has_problem && usage.stale) {
+        char aged[24];
+        int age = usage.age_seconds > 9999 ? 9999 : usage.age_seconds;
+        snprintf(aged, sizeof(aged), "Cached age %ds", age);
+        draw_footer_status(aged);
+    } else {
+        draw_footer_status(meta);
+    }
+    ui_flush_display();
+}
+
 /* ── Screen: Pending Request Overlay ─────────────────────────── */
 void ui_draw_pending_request(const pending_request_t *req)
 {
@@ -278,6 +482,7 @@ void ui_render_current_screen(void)
 
     /* Draw custom wallpaper first (if present) */
     bool has_wallpaper = wallpaper_draw_if_present();
+    (void)has_wallpaper;
 
     switch (current_mode()) {
     case APP_MODE_ANSWERS:
@@ -297,6 +502,9 @@ void ui_render_current_screen(void)
         break;
     case APP_MODE_MBTI_GUIDE:
         ui_draw_mbti_guide(eng);
+        break;
+    case APP_MODE_CLAUDE_USAGE:
+        ui_draw_claude_usage(eng);
         break;
     case APP_MODE_SETUP:
         ui_draw_setup_menu(eng);

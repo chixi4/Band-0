@@ -58,6 +58,13 @@ void display_end_frame(void);
 void display_text(int y, const char *text, int style);
 
 /**
+ * @brief Draw text at an explicit x/y position.
+ *
+ * Used by dense square-screen app UIs where centered rows waste space.
+ */
+void display_text_at(int x, int y, const char *text, int style);
+
+/**
  * @brief Fill a rounded rectangle.
  *
  * @param x, y, w, h  Bounding box.

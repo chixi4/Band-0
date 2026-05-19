@@ -39,10 +39,10 @@ static const char *TAG = "nvs_utils";
 
 /* ── Default Config ──────────────────────────────────────────── */
 static const app_config_t DEFAULT_CONFIG = {
-    .boot_mode          = 0,
+    .boot_mode          = APP_MODE_CLAUDE_USAGE,
     .language           = 0,
     .mbti_type          = 0,
-    .sleep_time_seconds = 300,
+    .sleep_time_seconds = 0,
     .merit_count        = 0,
     .bt_key_down        = 0,
     .bt_key_up          = 0,
@@ -51,6 +51,22 @@ static const app_config_t DEFAULT_CONFIG = {
     .mbti_knowledge_hidden = false,
     .key_sound          = true,
 };
+
+static void nvs_get_i32_int(nvs_handle_t h, const char *key, int *out)
+{
+    int32_t value = 0;
+    if (out && nvs_get_i32(h, key, &value) == ESP_OK) {
+        *out = (int)value;
+    }
+}
+
+static void nvs_get_i32_bool(nvs_handle_t h, const char *key, bool *out)
+{
+    int32_t value = 0;
+    if (out && nvs_get_i32(h, key, &value) == ESP_OK) {
+        *out = (value != 0);
+    }
+}
 
 /* ── NVS Init ────────────────────────────────────────────────── */
 void nvs_utils_init(void)
@@ -77,17 +93,17 @@ app_config_t nvs_load_config(void)
         return cfg;
     }
 
-    nvs_get_i32(h, KEY_LANG,      &cfg.language);
-    nvs_get_i32(h, KEY_MBTI,      &cfg.mbti_type);
-    nvs_get_i32(h, KEY_SLEEP,     &cfg.sleep_time_seconds);
-    nvs_get_i32(h, KEY_MERIT,     &cfg.merit_count);
-    nvs_get_i32(h, KEY_BT_DOWN,   &cfg.bt_key_down);
-    nvs_get_i32(h, KEY_BT_UP,     &cfg.bt_key_up);
-    nvs_get_i32(h, KEY_BT_TPL,    &cfg.bt_template);
-    nvs_get_i32(h, KEY_BOOT_MODE, &cfg.boot_mode);
-    nvs_get_i32(h, KEY_CLOCK_WARN, (int32_t *)&cfg.clock_warning);
-    nvs_get_i32(h, KEY_MBTI_HIDE, (int32_t *)&cfg.mbti_knowledge_hidden);
-    nvs_get_i32(h, KEY_KEY_SOUND, (int32_t *)&cfg.key_sound);
+    nvs_get_i32_int(h, KEY_LANG,      &cfg.language);
+    nvs_get_i32_int(h, KEY_MBTI,      &cfg.mbti_type);
+    nvs_get_i32_int(h, KEY_SLEEP,     &cfg.sleep_time_seconds);
+    nvs_get_i32_int(h, KEY_MERIT,     &cfg.merit_count);
+    nvs_get_i32_int(h, KEY_BT_DOWN,   &cfg.bt_key_down);
+    nvs_get_i32_int(h, KEY_BT_UP,     &cfg.bt_key_up);
+    nvs_get_i32_int(h, KEY_BT_TPL,    &cfg.bt_template);
+    nvs_get_i32_int(h, KEY_BOOT_MODE, &cfg.boot_mode);
+    nvs_get_i32_bool(h, KEY_CLOCK_WARN, &cfg.clock_warning);
+    nvs_get_i32_bool(h, KEY_MBTI_HIDE, &cfg.mbti_knowledge_hidden);
+    nvs_get_i32_bool(h, KEY_KEY_SOUND, &cfg.key_sound);
 
     nvs_close(h);
     ESP_LOGI(TAG, "config loaded (lang=%d, sleep=%ds, merit=%d)",

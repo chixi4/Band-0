@@ -204,7 +204,58 @@
  /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/nghttp/port/include/http_parser.h \
  /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/Uri.h \
  /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/detail/RequestHandler.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/HTTPClient/src/HTTPClient.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiClient.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src/WiFiClientSecure.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src/ssl_client.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/platform.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/mbedtls/esp_config.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/config.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/check_config.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/esp_mem.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/platform_time.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/net.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/net_sockets.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ssl.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/mbedtls/bignum.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/bignum.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ecp.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ssl_ciphersuites.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/pk.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/md.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/platform_util.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/rsa.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ecdsa.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/cipher.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/x509_crt.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/x509.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/asn1.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/x509_crl.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/dhm.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ecdh.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/debug.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/entropy.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/sha512.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/sha512_alt.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/hal/include/hal/sha_types.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_rom/include/esp32s3/rom/sha.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/ctr_drbg.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/aes.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/aes_alt.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/port/include/aes/esp_aes.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/hal/include/hal/aes_types.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/error.h \
  .pio/libdeps/m5stack-cardputer/ArduinoJson/src/ArduinoJson.h \
  .pio/libdeps/m5stack-cardputer/ArduinoJson/src/ArduinoJson.hpp \
  .pio/libdeps/m5stack-cardputer/ArduinoJson/src/ArduinoJson/Configuration.hpp \
- /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src/Preferences.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/SPIFFS/src/SPIFFS.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/libraries/FS/src/FS.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/mbedtls/mbedtls/include/mbedtls/base64.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_wifi.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_wifi_types.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_private/esp_wifi_private.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_wifi_crypto_types.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_private/wifi_os_adapter.h \
+ /Users/someone/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_wifi/include/esp_wifi_default.h

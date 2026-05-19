@@ -28,14 +28,14 @@ int display_init(void)
 
     int ret = jd79650_init();
     if (ret != 0) {
-        LOGE("jd79650 init failed: %d", ret);
+        ESP_LOGE(TAG, "jd79650 init failed: %d", ret);
         return ret;
     }
 
     /* Clear framebuffer to white */
     memset(s_fb, 0x00, sizeof(s_fb));
     s_ready = true;
-    LOGI("display ready: %dx%d 2bpp", EPD_WIDTH, EPD_HEIGHT);
+    ESP_LOGI(TAG, "display ready: %dx%d 2bpp", EPD_WIDTH, EPD_HEIGHT);
     return 0;
 }
 
@@ -150,6 +150,14 @@ void display_text(int y, const char *text, int style)
         if (x < 0) x = 0;
     }
 
+    draw_string(x, y, text, invert);
+    s_redraw_pending = true;
+}
+
+void display_text_at(int x, int y, const char *text, int style)
+{
+    if (!text || !display_is_ready()) return;
+    bool invert = (style == TEXT_STYLE_INVERTED);
     draw_string(x, y, text, invert);
     s_redraw_pending = true;
 }

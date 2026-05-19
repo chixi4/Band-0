@@ -50,6 +50,11 @@ void ui_draw_mbti_guide(bool english);
 void ui_draw_bt_pager(bool english);
 
 /**
+ * @brief Draw the Claude usage quota monitor app.
+ */
+void ui_draw_claude_usage(bool english);
+
+/**
  * @brief Handle a key event in the context of the current mode.
  * @return true if the event was consumed.
  */
