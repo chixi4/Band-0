@@ -8,14 +8,13 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "lz4.h"
 #include "app_config.h"
 #include "wallpaper.h"
 #include "nvs_utils.h"
 #include "display_epd.h"
-
-static const char *TAG = "wallpaper";
 
 /* ── Init ────────────────────────────────────────────────────── */
 void wallpaper_init(void)
@@ -48,14 +47,19 @@ int wallpaper_upload(const uint8_t *payload, size_t len)
         return -1;
     }
 
-    /* Decompress LZ4 block to raw 2bpp framebuffer */
-    uint8_t raw[WP_RAW_BYTES];
+    /* Decompress LZ4 block to raw 2bpp framebuffer. Keep this off task stacks. */
+    uint8_t *raw = malloc(WP_RAW_BYTES);
+    if (!raw) {
+        LOGE("upload: raw buffer alloc failed");
+        return -1;
+    }
     int decrypted_len = LZ4_decompress_safe(
         (const char *)payload, (char *)raw,
         len, WP_RAW_BYTES);
 
     if (decrypted_len < 0) {
         LOGE("LZ4 decompress failed: %d", decrypted_len);
+        free(raw);
         return -1;
     }
 
@@ -63,11 +67,13 @@ int wallpaper_upload(const uint8_t *payload, size_t len)
     int ret = nvs_wp_write(payload, len);
     if (ret != 0) {
         LOGE("wp partition write failed");
+        free(raw);
         return -1;
     }
 
     /* Draw to display */
     display_draw_bitmap(raw, WP_RAW_BYTES);
+    free(raw);
 
     LOGI("wallpaper uploaded: compressed=%d, raw=%d bytes", len, decrypted_len);
     return 0;
@@ -89,26 +95,41 @@ bool wallpaper_draw_if_present(void)
 {
     if (!nvs_wp_has_payload()) return false;
 
-    /* Read compressed payload */
-    uint8_t compressed[WP_PARTITION_CAPACITY];
     int compressed_len = nvs_wp_payload_length();
-    if (compressed_len <= 0 || compressed_len > (int)sizeof(compressed)) {
+    if (compressed_len <= 0 || compressed_len > WP_PARTITION_CAPACITY) {
+        return false;
+    }
+
+    /* Read/decompress off-stack; the ESP32-C2 main task stack is small. */
+    uint8_t *compressed = malloc((size_t)compressed_len);
+    uint8_t *raw = malloc(WP_RAW_BYTES);
+    if (!compressed || !raw) {
+        LOGE("wallpaper buffer alloc failed");
+        free(compressed);
+        free(raw);
         return false;
     }
 
     int read_len = nvs_wp_read(compressed, compressed_len);
-    if (read_len != compressed_len) return false;
+    if (read_len != compressed_len) {
+        free(compressed);
+        free(raw);
+        return false;
+    }
 
     /* Decompress */
-    uint8_t raw[WP_RAW_BYTES];
     int dec = LZ4_decompress_safe((const char *)compressed, (char *)raw,
                                    compressed_len, WP_RAW_BYTES);
     if (dec < 0) {
         LOGE("wallpaper LZ4 decompress failed: %d", dec);
+        free(compressed);
+        free(raw);
         return false;
     }
 
     display_draw_bitmap(raw, WP_RAW_BYTES);
+    free(compressed);
+    free(raw);
     LOGI("custom wallpaper drawn (%d bytes decompressed)", dec);
     return true;
 }

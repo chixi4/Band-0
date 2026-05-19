@@ -32,6 +32,22 @@ typedef struct {
 int wifi_save_ota_request(const ota_wifi_request_t *req);
 
 /**
+ * @brief Mark the current OTA request as armed for an updater reboot.
+ *
+ * The marker is cleared on the next main-app boot so stale OTA URLs do not
+ * remain visible after the updater has returned to main.
+ */
+int wifi_mark_ota_reboot_armed(void);
+
+/**
+ * @brief Clear an armed or legacy-completed OTA request after main boots.
+ *
+ * @return 1 when a stale/completed request was cleared, 0 when no cleanup was
+ *         needed, or a negative ESP error code on failure.
+ */
+int wifi_finalize_ota_request_on_main_boot(void);
+
+/**
  * @brief Erase OTA/Wi-Fi request keys from NVS.
  * Called after the updater has finished (success or fail).
  */

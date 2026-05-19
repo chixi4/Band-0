@@ -1,104 +1,137 @@
 #!/usr/bin/env python3
-"""
-mitmproxy inline script — transparent OTA firmware swap for Dot. / Rand-0.
+"""mitmproxy inline script: force official firmware checks to install our OTA.
 
 Usage:
-    mitmproxy -s tools/mitm_ota_swap.py --listen-port 8080
+    MITM_CUSTOM_FIRMWARE=build/firmware_1.2.5_hello_local_only_ota.bin \
+      mitmproxy -s tools/mitm_ota_swap.py --mode regular --listen-port 8080
 
-Then configure hosts/port-forwarding to route device traffic through mitmproxy:
-    dot.mindreset.tech  →  192.168.137.1:443  (mitmproxy listens on 443)
-    os-cdn.mindreset.tech  →  192.168.137.1:443
+Route the device's HTTPS traffic through mitmproxy by router transparent proxy,
+Wi-Fi hotspot NAT rules, or a test DNS/gateway setup. The target device must be
+your own lab device.
 
 The script:
-  1. Intercepts the firmware/query POST response
-  2. Changes the `host`, `path`, `url` fields to point to your custom firmware
-  3. When the device fetches the firmware binary, serves your modified image
+  1. Intercepts the firmware/query JSON response.
+  2. Forces needUpdate=true and points the returned path to a custom OTA image.
+  3. Serves the custom OTA directly when the device asks os-cdn.mindreset.tech.
 """
 
+from __future__ import annotations
+
+import hashlib
 import json
+import os
 from pathlib import Path
 from mitmproxy import http
 
-# ── Configuration ──────────────────────────────────────────────
-# Path to the modified firmware binary to serve
-CUSTOM_FIRMWARE = Path("build/firmware_1.2.5_hello_ota.bin")
 
-# Your server that hosts the custom firmware
-SPOOF_HOST = "192.168.4.2:8088"
-SPOOF_PATH = "/dot/firmware/rand_0/1/custom_hello_ota.bin"
-
-# The CDN host we want to intercept
+CUSTOM_FIRMWARE = Path(
+    os.environ.get("MITM_CUSTOM_FIRMWARE", "build/firmware_1.2.5_hello_local_only_ota.bin")
+)
+UPDATE_VERSION = os.environ.get("MITM_UPDATE_VERSION", "mitm-custom-local")
 CDN_HOST = "os-cdn.mindreset.tech"
-# ──────────────────────────────────────────────────────────────
+QUERY_MARKERS = (
+    "firmware/query",
+    "/api/authV2/panel/device/firmware/query",
+)
+
+
+def _firmware_path() -> str:
+    return f"/dot/firmware/rand_0/1/{CUSTOM_FIRMWARE.name}"
 
 
 def request(flow: http.HTTPFlow) -> None:
-    """Handle outgoing requests."""
-    # If device is downloading from the CDN, redirect to our server
-    if CDN_HOST in flow.request.pretty_host:
-        # Option A: Redirect to our custom firmware server
-        flow.request.host = SPOOF_HOST.split(":")[0]
-        flow.request.port = int(SPOOF_HOST.split(":")[1]) if ":" in SPOOF_HOST else 8088
-        flow.request.scheme = "http"
-        flow.request.path = SPOOF_PATH
-        flow.request.host_header = SPOOF_HOST
+    """Serve the custom binary without depending on the real CDN."""
+    if flow.request.pretty_host != CDN_HOST:
+        return
+    if not flow.request.path.endswith(".bin"):
+        return
+
+    if not CUSTOM_FIRMWARE.exists():
+        flow.response = http.Response.make(500, f"custom firmware not found: {CUSTOM_FIRMWARE}\n")
+        return
+
+    custom_data = CUSTOM_FIRMWARE.read_bytes()
+    flow.response = http.Response.make(
+        200,
+        custom_data,
+        {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(len(custom_data)),
+            "Cache-Control": "no-store",
+            "X-MITM-OTA-Swap": "1",
+        },
+    )
+    print(f"[OTA-SWAP] served {CUSTOM_FIRMWARE} for {flow.request.pretty_url}")
 
 
 def response(flow: http.HTTPFlow) -> None:
-    """Handle incoming responses."""
+    """Patch firmware-query JSON so original firmware enters updater."""
     url = flow.request.pretty_url
 
-    # 1. Intercept firmware query response
-    if "firmware/query" in url or "/fwq" in url:
-        if flow.response.status_code != 200:
-            return
+    if not any(marker in url for marker in QUERY_MARKERS):
+        return
+    if flow.response.status_code != 200:
+        return
+    if not CUSTOM_FIRMWARE.exists():
+        print(f"[OTA-SWAP] custom firmware not found: {CUSTOM_FIRMWARE}")
+        return
 
-        # Read the original JSON response
-        try:
-            data = json.loads(flow.response.text)
-        except (json.JSONDecodeError, ValueError):
-            return
+    try:
+        data = json.loads(flow.response.text)
+    except (json.JSONDecodeError, ValueError):
+        print("[OTA-SWAP] firmware query was not JSON; left unchanged")
+        return
 
-        # Override the OTA download URL fields
-        if data.get("needUpdate"):
-            print(f"[OTA-SWAP] Intercepted firmware query, overriding download URL")
-            custom_size = CUSTOM_FIRMWARE.stat().st_size
-            custom_sha256 = _sha256(CUSTOM_FIRMWARE)
+    custom_size = CUSTOM_FIRMWARE.stat().st_size
+    custom_sha256 = _sha256(CUSTOM_FIRMWARE)
+    custom_path = _firmware_path()
 
-            # Point the device to download from OUR server
-            data["host"] = SPOOF_HOST
-            data["path"] = SPOOF_PATH
-            data["url"] = f"http://{SPOOF_HOST}{SPOOF_PATH}"
-            data["ota"] = {
-                "host": SPOOF_HOST,
-                "path": SPOOF_PATH,
-                "query": "",
-                "url": f"http://{SPOOF_HOST}{SPOOF_PATH}",
-                "sha256": custom_sha256,
-                "size": custom_size,
-            }
-            data["size"] = custom_size
-            data["updateVersion"] = "hello-world-custom"
+    _patch_update_object(data, custom_path, custom_size, custom_sha256)
 
-            flow.response.text = json.dumps(data, indent=2)
-            flow.response.headers["Content-Length"] = str(len(flow.response.text))
-            print(f"[OTA-SWAP] Firmware redirected to: http://{SPOOF_HOST}{SPOOF_PATH}")
+    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    flow.response.content = raw
+    flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
+    flow.response.headers["Content-Length"] = str(len(raw))
+    flow.response.headers["Cache-Control"] = "no-store"
+    flow.response.headers["X-MITM-OTA-Swap"] = "1"
+    print(f"[OTA-SWAP] forced update path https://{CDN_HOST}{custom_path}")
 
-    # 2. Alternatively, intercept firmware BINARY download from CDN
-    #    (This handles the case where the device ignores the query response
-    #     and directly hits os-cdn.mindreset.tech)
-    if CDN_HOST in flow.request.pretty_host and flow.response.status_code == 200:
-        ctype = flow.response.headers.get("Content-Type", "")
-        if "octet-stream" in ctype or "binary" in ctype or ".bin" in url:
-            print(f"[OTA-SWAP] Swapping firmware binary!")
-            custom_data = CUSTOM_FIRMWARE.read_bytes()
-            flow.response.content = custom_data
-            flow.response.headers["Content-Length"] = str(len(custom_data))
-            print(f"[OTA-SWAP] Served {len(custom_data)} bytes of custom firmware")
+
+def _patch_update_object(data: dict, custom_path: str, size: int, digest: str) -> None:
+    """Patch known response shapes without assuming the exact official schema."""
+    data["needUpdate"] = True
+    data["version"] = data.get("version") or "1.2.5"
+    data["updateVersion"] = UPDATE_VERSION
+    data["host"] = CDN_HOST
+    data["path"] = custom_path
+    data["query"] = ""
+    data["size"] = size
+    data["sha256"] = digest
+    data["url"] = f"https://{CDN_HOST}{custom_path}"
+
+    ota = data.get("ota")
+    if not isinstance(ota, dict):
+        ota = {}
+        data["ota"] = ota
+    ota.update(
+        {
+            "host": CDN_HOST,
+            "path": custom_path,
+            "query": "",
+            "size": size,
+            "sha256": digest,
+            "url": f"https://{CDN_HOST}{custom_path}",
+        }
+    )
+
+    # Some APIs wrap payloads under data/result. Patch those too if present.
+    for key in ("data", "result"):
+        child = data.get(key)
+        if isinstance(child, dict):
+            _patch_update_object(child, custom_path, size, digest)
 
 
 def _sha256(path: Path) -> str:
-    import hashlib
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):

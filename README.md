@@ -17,6 +17,9 @@
 | [`docs/REVERSE_ENGINEERING_REPORT.md`](docs/REVERSE_ENGINEERING_REPORT.md) | 主逆向报告：样本校验、分区、功能分类、硬件还原、协议、Hello World |
 | [`docs/DECOMPILATION_REPORT.md`](docs/DECOMPILATION_REPORT.md) | 反编译专项报告：Ghidra 全量输出、关键函数、可读恢复代码 |
 | [`docs/GPIO_AND_API_MAP.md`](docs/GPIO_AND_API_MAP.md) | GPIO 引脚、API 端点、业务逻辑和本地化 patch 总表 |
+| [`docs/ORIGINAL_FIRMWARE_MITM_OTA.md`](docs/ORIGINAL_FIRMWARE_MITM_OTA.md) | 不改原固件，通过 MITM OTA 换包的方案和验证标准 |
+| [`docs/CARDPUTER_MITM_AP.md`](docs/CARDPUTER_MITM_AP.md) | Cardputer ADV 开 `ADV 2.4G` 热点、DNS 劫持和本地云中继的实操文档 |
+| [`docs/CLAUDE_USAGE_PORTING_PLAN.md`](docs/CLAUDE_USAGE_PORTING_PLAN.md) | `cardputer-claude-usage` 迁移到本设备的可行性和阶段计划 |
 | [`docs/LOCALIZATION_PLAYBOOK.md`](docs/LOCALIZATION_PLAYBOOK.md) | 脱云手册：本地图片转换、本地 OTA 服务、后续 URL patch 方向 |
 | [`docs/DEMO_CHECKLIST.md`](docs/DEMO_CHECKLIST.md) | 课堂演示清单：按顺序跑命令和讲解重点 |
 | [`docs/HARDWARE_BREAKOUT_PLAN.md`](docs/HARDWARE_BREAKOUT_PLAN.md) | 拆机/串口/下载模式验证步骤 |
@@ -200,4 +203,4 @@ python3 tools/patch_local_only_firmware.py \
 
 - 在实物上通过 UART 日志和逻辑分析仪确认 UART/BOOT/EN、电池 ADC 和电源管理细节。
 - 在实物上验证 Hello World 壁纸上传、Hello+脱云 OTA 和本地 NTP 校时。
-- 后续再评估把另一个项目的屏幕 UI 和功能迁移到这个设备上。
+- 在保留原功能的基础上继续完善 `Claude Usage` App：BLE/Wi-Fi payload 推送、正方形电子纸 UI 打磨、设备状态与 OTA 控制。

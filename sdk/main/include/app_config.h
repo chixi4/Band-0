@@ -2,10 +2,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_log.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define BAND0_FIRMWARE_VERSION "1.2.5-rebuilt-usage4"
 
 /* ── Application Modes ─────────────────────────────────────── */
 typedef enum {
@@ -15,7 +18,8 @@ typedef enum {
     APP_MODE_BT_PAGER = 3,
     APP_MODE_CLOCK   = 4,
     APP_MODE_MBTI_GUIDE = 5,
-    APP_MODE_SETUP   = 6,
+    APP_MODE_CLAUDE_USAGE = 6,
+    APP_MODE_SETUP   = 7,
 } app_mode_t;
 
 /* ── Application Configuration (stored in NVS) ─────────────── */
@@ -78,10 +82,10 @@ int           millis(void);
 void          delay_ms(uint32_t ms);
 
 /* Debug logging helper (wraps ESP_LOG) */
-#define TAG "rand0"
-#define LOGI(...) ESP_LOGI(TAG, ##__VA_ARGS__)
-#define LOGW(...) ESP_LOGW(TAG, ##__VA_ARGS__)
-#define LOGE(...) ESP_LOGE(TAG, ##__VA_ARGS__)
+#define RAND0_LOG_TAG "rand0"
+#define LOGI(...) ESP_LOGI(RAND0_LOG_TAG, ##__VA_ARGS__)
+#define LOGW(...) ESP_LOGW(RAND0_LOG_TAG, ##__VA_ARGS__)
+#define LOGE(...) ESP_LOGE(RAND0_LOG_TAG, ##__VA_ARGS__)
 
 #ifdef __cplusplus
 }

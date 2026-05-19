@@ -43,6 +43,8 @@ static uint8_t s_hid_report_map[256];
 static int s_hid_report_map_len = 0;
 static bool s_ble_ready = false;
 
+static void ble_start_advertising(void);
+
 /* ── Key Label Tables ────────────────────────────────────────── */
 typedef struct {
     const char *en;
@@ -146,18 +148,18 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         if (event->connect.status != 0) {
             /* Connection failed, restart advertising */
             ble_svc_gap_device_name_set("Band-0 Pager");
-            ble_gap_adv_start();
+            ble_start_advertising();
         }
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "BLE disconnected, restarting advertising");
-        ble_gap_adv_start();
+        ble_start_advertising();
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
         ESP_LOGI(TAG, "Advertising complete, restarting");
-        ble_gap_adv_start();
+        ble_start_advertising();
         break;
 
     default:
@@ -167,16 +169,11 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 }
 
 /* ── Start Advertising ───────────────────────────────────────── */
-static void ble_gap_adv_start(void)
+static void ble_start_advertising(void)
 {
     struct ble_gap_adv_params adv_params = {0};
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-
-    uint8_t adv_data[] = {
-        0x02, 0x01, 0x06,  /* Flags: LE General Disc, BR/EDR Not Supported */
-        0x05, 0x02, 0x00, 0x12, 0x00, 0x12,  /* Incomplete UUID16 list: 0x1200 (HID) */
-    };
 
     struct ble_hs_adv_fields fields = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -187,8 +184,11 @@ static void ble_gap_adv_start(void)
 
     ble_gap_adv_set_fields(&fields);
 
-    ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
-                      &adv_params, ble_gap_event_cb, NULL);
+    int rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+                               &adv_params, ble_gap_event_cb, NULL);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "adv start failed: %d", rc);
+    }
 }
 
 /* ── NimBLE Host Task ────────────────────────────────────────── */
@@ -215,8 +215,11 @@ void ble_pager_init(void)
     /* Configure GATT */
     ble_svc_gatt_init();
 
+    s_hid_report_map_len = sizeof(s_ppt_report_map);
+    memcpy(s_hid_report_map, s_ppt_report_map, s_hid_report_map_len);
+
     /* Start advertising */
-    ble_gap_adv_start();
+    ble_start_advertising();
 
     /* Start NimBLE host task */
     xTaskCreate(ble_host_task, "ble_host", 4096, NULL, 5, NULL);

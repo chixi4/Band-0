@@ -2,6 +2,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include "app_config.h"
+#include "ble_pager.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /* ── Default AP Configuration ────────────────────────────── */
-#define AP_SSID_DEFAULT     "Band-0-MITM"
+#define AP_SSID_DEFAULT     "ADV 2.4G"
 #define AP_PASSWORD_DEFAULT "mitm1234"
 #define AP_CHANNEL_DEFAULT  6
 #define AP_MAX_CONN         8

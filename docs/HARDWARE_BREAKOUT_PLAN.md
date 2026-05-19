@@ -8,6 +8,8 @@
 - 板上 USB-C 口大概率只接电源，或没有接到 USB-UART 桥。
 - 拆机图上没有明显 CH340/CP210x/FTDI 这类 USB-UART 芯片。
 - 蜂鸣器旁边一排金色测试点很可能是工厂测试/串口/下载焊盘。
+- 2026-05-19 实物确认：7 触点排中“最远离屏幕排线的触点”是 UART0 RX / GPIO19；“远离屏幕排线侧数第 2 个触点”是 UART0 TX / GPIO20。
+- 2026-05-19 实物确认：BOOT/GPIO9 测试点经 `10K -> GND` 并在上电瞬间保持低电平，可进入 `DOWNLOAD(UART0)` 下载模式。
 - 后续最现实的突破路线是 **3.3V USB-UART + 测试点**，不是直接靠 USB-C。
 
 已由固件定位的业务 GPIO：
@@ -24,7 +26,7 @@
 | 10 | buzzer |
 | 18 | shake/vibration input，上拉中断 |
 
-完整证据表见 `docs/GPIO_AND_API_MAP.md`。UART0/BOOT/EN 仍需在板上实测。
+完整证据表见 `docs/GPIO_AND_API_MAP.md`。UART0 RX/TX 与 BOOT/GPIO9 已确认；EN/CHIP_PU 仍需在板上实测。
 
 ## 2. 手头硬件怎么用
 
@@ -46,6 +48,14 @@
 3. 找上电跳变点：开机瞬间有波形、空闲高电平的点可能是 UART TX。
 4. 逻辑分析仪设 74880、115200、460800、921600 逐个尝试，先找 ROM boot log。
 5. 找到 TX 后，再用 USB-UART 的 TX 通过 1k 串联电阻试探 RX。
+
+当前实物记录：
+
+| 触点 | 结论 | 证据 |
+|---|---|---|
+| 最远离屏幕排线的触点 | UART0 RX / GPIO19 | `CH343 TX -> 1K -> 触点` 后 esptool 成功连接，读到 `Chip is ESP32-C2`、MAC `8c:8c:29:57:3e:6c` |
+| 远离屏幕排线侧数第 2 个 | UART0 TX / GPIO20 | USB-UART RX 读到 `ESP-ROM:esp32c2-eco4-20240515`、`rst:0x1 (POWERON)`、`boot:0xc (SPI_FAST_FLASH_BOOT)`、`GPIO 19 and 20 are used as console UART I/O pins` |
+| 用户实测 BOOT 触点 | BOOT / GPIO9 | `10K -> GND` 后重新上电，串口输出 `boot:0x4 (DOWNLOAD(UART0))`、`waiting for download`；esptool 可连接 |
 
 连接规则：
 
@@ -69,7 +79,7 @@ ESP32-C2/ESP8684 进入下载模式一般需要控制 strapping：
 
 1. 先只接 GND/RX/TX，看能否读到启动日志。
 2. 如果能读日志但不能烧录，再找 BOOT(GPIO9) 和 EN。
-3. 手动下载流程：GPIO9 拉低，复位 EN，松开 EN，开始 `esptool`，再松开 GPIO9。
+3. 手动下载流程：GPIO9 经 10K 拉低，重新上电，开始 `esptool`。刷写完成后移除 GPIO9 拉地，再重新上电进入 SPI Boot。
 4. 成功烧录后要让 GPIO9 回到高电平或悬空，再复位进入 SPI Boot。
 
 ## 5. 推荐命令
@@ -99,6 +109,22 @@ esptool.py --chip esp32c2 --port /dev/cu.usbserial-XXXX \
 esptool.py --chip esp32c2 --port /dev/cu.usbserial-XXXX \
   write_flash 0x0 build/firmware_1.2.5_hello_local_only_factory.bin
 ```
+
+当前实机稳定写入 `main` app 分区的命令：
+
+```bash
+/Users/yuookie/.espressif/python_env/idf5.5_py3.9_env/bin/python -m esptool \
+  --chip esp32c2 --port /dev/cu.usbmodem5B7B0549671 --baud 115200 \
+  --before no_reset --after no_reset \
+  write_flash --flash_mode dio --flash_size 2MB --flash_freq 60m \
+  0x10000 sdk/build/Quote_0_ESP8684_IDF.bin
+```
+
+如果写入中途因为杜邦线接触不稳失败：
+
+- 不要正常启动设备，因为 app 区可能半写。
+- 保持 BOOT/GPIO9 通过 10K 拉地。
+- 重新运行同一条 `write_flash`，直到出现 `Hash of data verified.`。
 
 ## 6. 拆机时重点找什么
 

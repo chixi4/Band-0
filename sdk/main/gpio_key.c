@@ -18,6 +18,8 @@
 #include "gpio_key.h"
 #include "buzzer.h"
 
+static const char *TAG = "gpio_key";
+
 /* ── Internal State ──────────────────────────────────────────── */
 typedef struct {
     uint8_t  gpio;
@@ -72,6 +74,11 @@ void key_task(void *arg)
 
     ESP_LOGI(TAG, "key_task started");
 
+    TickType_t scan_delay = pdMS_TO_TICKS(20);
+    if (scan_delay < 1) {
+        scan_delay = 1;
+    }
+
     for (;;) {
         uint64_t now = esp_timer_get_time();
 
@@ -125,6 +132,6 @@ void key_task(void *arg)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(2));  /* ~2ms scan interval */
+        vTaskDelay(scan_delay);
     }
 }

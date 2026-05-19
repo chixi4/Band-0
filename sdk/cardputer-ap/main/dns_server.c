@@ -170,12 +170,14 @@ static void dns_server_task(void *arg)
         memcpy(buf + rpos, buf + sizeof(dns_header_t), qlen);
         rpos += qlen;
 
-        /* Answer: type A, class IN, TTL 60s */
+        /* Answer: compressed name pointer + type A, class IN, TTL 60s */
+        uint16_t name_ptr = htons(0xC00C);
         uint16_t rtype = htons(DNS_TYPE_A);
         uint16_t rclass = htons(DNS_CLASS_IN);
         uint32_t ttl = htonl(60);
         uint16_t rdlen = htons(4);
 
+        memcpy(buf + rpos, &name_ptr, 2); rpos += 2;
         memcpy(buf + rpos, &rtype, 2); rpos += 2;
         memcpy(buf + rpos, &rclass, 2); rpos += 2;
         memcpy(buf + rpos, &ttl, 4); rpos += 4;

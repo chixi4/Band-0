@@ -7,21 +7,26 @@ idf_component_register(
         wifi_config.c
         wallpaper.c
         cloud_ota.c
+        claude_usage.c
+        debug_server.c
         ui_render.c
         ble_pager.c
         nvs_utils.c
     INCLUDE_DIRS
         include
     PRIV_REQUIRES
+        app_update
         nvs_flash
         esp_wifi
         esp_event
         esp_netif
         esp_http_client
+        esp_http_server
         esp_https_ota
-        nimble
+        bt
         lz4
-        cJSON
+        jd79650
+        json
         driver
         esp_timer
 )

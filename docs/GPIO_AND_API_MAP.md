@@ -15,10 +15,17 @@
 | 8 | 上方物理键，长按退出/Back | 输入，active-low | key table 第 1 项：`gpio=8, short=4, long=2`；用户实物确认“上长按退出” | 高 |
 | 10 | buzzer / tone 输出 | 输出/外设通道 | `buzzer_init` true `0x42004f3a` 配置 pin `10`，并调用 drive capability `gpio=10, cap=3` | 高 |
 | 18 | shake / 振动或摇动检测输入 | 输入，上拉，中断 | `shake_chk` true `0x42005976` 配置 `pin_bit_mask=1<<18`、pull-up、interrupt type `2`，并安装 ISR `0x40381a6a` | 高 |
-| 19 | UART0 RXD | 输入 | ESP32-C2/ESP8684 官方默认 UART0；固件内只有 UART 驱动字符串，板级焊盘仍需万用表/串口验证 | 中 |
-| 20 | UART0 TXD | 输出 | ESP32-C2/ESP8684 官方默认 UART0；建议拆机优先找 TX idle 3.3V | 中 |
+| 19 | UART0 RXD | 输入 | 2026-05-19 实物确认：7 触点排中“最远离屏幕排线的触点”经 `CH343 TX -> 1K -> 触点` 可被 esptool 连接，读到 ESP32-C2 MAC `8c:8c:29:57:3e:6c`；启动日志也打印 `GPIO 19 and 20 are used as console UART I/O pins` | 高 |
+| 20 | UART0 TXD | 输出 | 2026-05-19 实物确认：7 触点排中“远离屏幕排线侧数第 2 个触点”接 USB-UART RX 后读到 `ESP-ROM:esp32c2-eco4-20240515` 和 ESP-IDF 日志 | 高 |
 
-下载/启动相关：GPIO9 是 ESP32-C2/ESP8684 常见 BOOT strapping 脚，EN/CHIP_PU 是复位脚。它们不是 app 业务 GPIO，需按板上焊盘确认。
+下载/启动相关：
+
+| GPIO | 功能 | 实物状态 | 证据 |
+|---:|---|---|---|
+| 9 | BOOT strapping | 已确认测试点 | `10K -> GND` 并重新上电后输出 `boot:0x4 (DOWNLOAD(UART0))`、`waiting for download`，随后 esptool 可读到 ESP32-C2 和 MAC `8c:8c:29:57:3e:6c` |
+| EN / CHIP_PU | 复位 | 未确认独立测试点 | 当前通过断开/恢复整机供电完成复位 |
+
+GPIO9/EN 不是 app 业务 GPIO，但它们是恢复、刷写和防砖流程的关键。
 
 ## 2. 两个物理按键
 

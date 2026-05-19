@@ -13,7 +13,7 @@
  *
  * Usage:
  *   1. Flash to Cardputer ADV
- *   2. Connect Mac to "Band-0-MITM" AP
+ *   2. Connect Mac to "ADV 2.4G" AP
  *   3. Set Mac IP in the web config (http://192.168.4.1)
  *   4. On Mac: python3 tools/local_cloud.py
  *   5. Connect Band-0 to the AP
