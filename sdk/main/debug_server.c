@@ -10,14 +10,18 @@
 #include "freertos/task.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "cJSON.h"
 #include "app_config.h"
+#include "ble_usage.h"
 #include "claude_usage.h"
+#include "diag_log.h"
 #include "debug_server.h"
+#include "display_epd.h"
 #include "ui_render.h"
 #include "wifi_config.h"
 
@@ -32,6 +36,16 @@ static httpd_handle_t s_httpd;
 #define OTA_KEY_RESULT_FOR "result_for"
 #define OTA_KEY_FAIL      "fail_reason"
 #define OTA_KEY_ARMED     "armed_attempt"
+
+static void register_uri_checked(const httpd_uri_t *uri)
+{
+    esp_err_t err = httpd_register_uri_handler(s_httpd, uri);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register %s method=%d failed: %s",
+                 uri->uri, uri->method, esp_err_to_name(err));
+        diag_log_event("E", "http", "register %s err=%d", uri->uri, err);
+    }
+}
 
 static void add_cors(httpd_req_t *req)
 {
@@ -77,6 +91,86 @@ static void add_usage_json(cJSON *root)
     cJSON_AddBoolToObject(u, "stale", usage.stale);
     cJSON_AddBoolToObject(u, "demo", usage.is_demo);
     cJSON_AddNumberToObject(u, "last_update_ms", usage.last_update_ms);
+}
+
+static void add_wifi_json(cJSON *root)
+{
+    wifi_runtime_status_t wifi;
+    wifi_get_runtime_status(&wifi);
+    cJSON *w = cJSON_AddObjectToObject(root, "wifi");
+    cJSON_AddBoolToObject(w, "sta_connected", wifi.sta_connected);
+    cJSON_AddBoolToObject(w, "portal_active", wifi.portal_active);
+    cJSON_AddNumberToObject(w, "state", wifi.state);
+    cJSON_AddNumberToObject(w, "retry_count", wifi.retry_count);
+    cJSON_AddStringToObject(w, "ip", wifi.ip);
+}
+
+static void add_ble_json(cJSON *root)
+{
+    ble_usage_status_t ble;
+    ble_usage_get_status(&ble);
+    cJSON *b = cJSON_AddObjectToObject(root, "ble");
+    cJSON_AddBoolToObject(b, "auto_start", BAND0_AUTO_START_BLE != 0);
+    cJSON_AddBoolToObject(b, "ready", ble.ready);
+    cJSON_AddBoolToObject(b, "advertising", ble.advertising);
+    cJSON_AddBoolToObject(b, "connected", ble.connected);
+    cJSON_AddNumberToObject(b, "conn_handle", ble.conn_handle);
+    cJSON_AddNumberToObject(b, "rx_count", ble.rx_count);
+    cJSON_AddNumberToObject(b, "notify_count", ble.notify_count);
+    cJSON_AddStringToObject(b, "last_error", ble.last_error);
+}
+
+static void add_heap_json(cJSON *root)
+{
+    cJSON *heap = cJSON_AddObjectToObject(root, "heap");
+    cJSON_AddNumberToObject(heap, "free", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(heap, "min_free", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(heap, "largest_8bit",
+                            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+static const char *health_label(bool *ok_out, cJSON *reasons)
+{
+    bool ok = true;
+    wifi_runtime_status_t wifi;
+    wifi_get_runtime_status(&wifi);
+    ble_usage_status_t ble;
+    ble_usage_get_status(&ble);
+    claude_usage_state_t usage;
+    claude_usage_get_state(&usage);
+
+    if (!display_is_ready()) {
+        ok = false;
+        cJSON_AddItemToArray(reasons, cJSON_CreateString("display_not_ready"));
+    }
+    if (!wifi.sta_connected && !wifi.portal_active) {
+        ok = false;
+        cJSON_AddItemToArray(reasons, cJSON_CreateString("wifi_not_ready"));
+    }
+    if ((BAND0_AUTO_START_BLE != 0) && !ble.ready) {
+        ok = false;
+        cJSON_AddItemToArray(reasons, cJSON_CreateString("ble_not_ready"));
+    }
+    if (!usage.has_data) {
+        cJSON_AddItemToArray(reasons, cJSON_CreateString("usage_waiting"));
+    }
+    if (esp_get_free_heap_size() < 24000) {
+        ok = false;
+        cJSON_AddItemToArray(reasons, cJSON_CreateString("low_heap"));
+    }
+
+    if (ok_out) *ok_out = ok;
+    return ok ? "ok" : "degraded";
+}
+
+static void add_health_json(cJSON *root)
+{
+    cJSON *reasons = cJSON_CreateArray();
+    bool ok = false;
+    const char *label = health_label(&ok, reasons);
+    cJSON_AddStringToObject(root, "health", label);
+    cJSON_AddBoolToObject(root, "ok", ok);
+    cJSON_AddItemToObject(root, "reasons", reasons);
 }
 
 static void add_nvs_str_if_exists(cJSON *root, nvs_handle_t nvs, const char *json_key,
@@ -172,9 +266,62 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "firmware", BAND0_FIRMWARE_VERSION);
     cJSON_AddNumberToObject(root, "mode", current_mode());
     cJSON_AddNumberToObject(root, "uptime_ms", esp_timer_get_time() / 1000);
+    cJSON_AddNumberToObject(root, "diag_count", diag_log_count());
+    cJSON_AddBoolToObject(root, "display_ready", display_is_ready());
+    add_health_json(root);
+    add_wifi_json(root);
+    add_ble_json(root);
     add_usage_json(root);
     cJSON *ota = build_ota_status_json();
     if (ota) cJSON_AddItemToObject(root, "ota", ota);
+    add_heap_json(root);
+    esp_err_t ret = send_json(req, "200 OK", root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static esp_err_t health_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "device", "Band-0");
+    cJSON_AddStringToObject(root, "firmware", BAND0_FIRMWARE_VERSION);
+    add_health_json(root);
+    add_wifi_json(root);
+    add_ble_json(root);
+    add_heap_json(root);
+    esp_err_t ret = send_json(req, "200 OK", root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static esp_err_t heap_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "device", "Band-0");
+    add_heap_json(root);
+    esp_err_t ret = send_json(req, "200 OK", root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static esp_err_t logs_get_handler(httpd_req_t *req)
+{
+    diag_log_entry_t entries[8];
+    size_t count = diag_log_snapshot(entries, 8);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "device", "Band-0");
+    cJSON_AddNumberToObject(root, "count", count);
+    cJSON_AddNumberToObject(root, "total", diag_log_count());
+    cJSON *arr = cJSON_AddArrayToObject(root, "events");
+    for (size_t i = 0; i < count; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddNumberToObject(e, "seq", entries[i].seq);
+        cJSON_AddNumberToObject(e, "ms", entries[i].ms);
+        cJSON_AddStringToObject(e, "level", entries[i].level);
+        cJSON_AddStringToObject(e, "module", entries[i].module);
+        cJSON_AddStringToObject(e, "message", entries[i].message);
+        cJSON_AddItemToArray(arr, e);
+    }
     esp_err_t ret = send_json(req, "200 OK", root);
     cJSON_Delete(root);
     return ret;
@@ -209,6 +356,8 @@ static esp_err_t usage_push_handler(httpd_req_t *req)
     if (ok) {
         set_current_mode(APP_MODE_CLAUDE_USAGE);
         ui_request_redraw();
+        ble_usage_notify_status();
+        diag_log_event("I", "usage", "push via wifi");
     }
 
     cJSON *root = cJSON_CreateObject();
@@ -233,7 +382,41 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "message", "reboot scheduled");
     esp_err_t ret = send_json(req, "200 OK", root);
     cJSON_Delete(root);
+    diag_log_event("W", "api", "reboot scheduled");
     xTaskCreate(delayed_restart_task, "api_reboot", 2048, NULL, 5, NULL);
+    return ret;
+}
+
+static esp_err_t redraw_handler(httpd_req_t *req)
+{
+    ui_request_redraw();
+    diag_log_event("I", "api", "redraw requested");
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddStringToObject(root, "message", "redraw requested");
+    esp_err_t ret = send_json(req, "200 OK", root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static esp_err_t ble_start_handler(httpd_req_t *req)
+{
+    int rc = ble_usage_init();
+    ble_usage_status_t ble;
+    ble_usage_get_status(&ble);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", rc == 0);
+    cJSON_AddNumberToObject(root, "rc", rc);
+    cJSON_AddNumberToObject(root, "heap_free", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(root, "heap_largest", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    cJSON *b = cJSON_AddObjectToObject(root, "ble");
+    cJSON_AddBoolToObject(b, "ready", ble.ready);
+    cJSON_AddBoolToObject(b, "advertising", ble.advertising);
+    cJSON_AddBoolToObject(b, "connected", ble.connected);
+    cJSON_AddStringToObject(b, "last_error", ble.last_error);
+    esp_err_t ret = send_json(req, rc == 0 ? "200 OK" : "503 Service Unavailable", root);
+    cJSON_Delete(root);
     return ret;
 }
 
@@ -248,6 +431,7 @@ static bool parse_mode_name(const char *name, app_mode_t *mode)
     else if (!strcmp(name, "mbti")) *mode = APP_MODE_MBTI_GUIDE;
     else if (!strcmp(name, "usage") || !strcmp(name, "claude")) *mode = APP_MODE_CLAUDE_USAGE;
     else if (!strcmp(name, "setup")) *mode = APP_MODE_SETUP;
+    else if (!strcmp(name, "safe") || !strcmp(name, "status")) *mode = APP_MODE_SAFE_STATUS;
     else return false;
     return true;
 }
@@ -276,7 +460,7 @@ static esp_err_t mode_post_handler(httpd_req_t *req)
     cJSON *mode_item = cJSON_GetObjectItem(json, "mode");
     if (cJSON_IsNumber(mode_item)) {
         int requested = mode_item->valueint;
-        if (requested >= APP_MODE_ANSWERS && requested <= APP_MODE_SETUP) {
+        if (requested >= APP_MODE_ANSWERS && requested <= APP_MODE_SAFE_STATUS) {
             mode = (app_mode_t)requested;
             ok = true;
         }
@@ -287,6 +471,7 @@ static esp_err_t mode_post_handler(httpd_req_t *req)
     if (ok) {
         set_current_mode(mode);
         ui_request_redraw();
+        diag_log_event("I", "api", "mode=%d", mode);
     }
 
     cJSON *root = cJSON_CreateObject();
@@ -356,6 +541,7 @@ static esp_err_t ota_url_handler(httpd_req_t *req)
         if (updater && esp_ota_set_boot_partition(updater) == ESP_OK) {
             if (wifi_mark_ota_reboot_armed() == 0) {
                 boot_set = true;
+                diag_log_event("W", "ota", "reboot to updater");
                 xTaskCreate(delayed_restart_task, "ota_reboot", 2048, NULL, 5, NULL);
             }
         }
@@ -379,6 +565,10 @@ void debug_server_start(void)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.uri_match_fn = httpd_uri_match_wildcard;
+    cfg.stack_size = 6144;
+    cfg.max_uri_handlers = 16;
+    cfg.max_open_sockets = 2;
+    cfg.lru_purge_enable = true;
 
     esp_err_t err = httpd_start(&s_httpd, &cfg);
     if (err != ESP_OK) {
@@ -401,10 +591,30 @@ void debug_server_start(void)
         .method = HTTP_GET,
         .handler = status_get_handler,
     };
+    const httpd_uri_t health = {
+        .uri = "/api/health",
+        .method = HTTP_GET,
+        .handler = health_get_handler,
+    };
+    const httpd_uri_t logs = {
+        .uri = "/api/logs",
+        .method = HTTP_GET,
+        .handler = logs_get_handler,
+    };
+    const httpd_uri_t heap = {
+        .uri = "/api/debug/heap",
+        .method = HTTP_GET,
+        .handler = heap_get_handler,
+    };
     const httpd_uri_t push = {
         .uri = "/api/push",
         .method = HTTP_POST,
         .handler = usage_push_handler,
+    };
+    const httpd_uri_t redraw = {
+        .uri = "/api/redraw",
+        .method = HTTP_POST,
+        .handler = redraw_handler,
     };
     const httpd_uri_t ota = {
         .uri = "/api/ota/url",
@@ -426,14 +636,24 @@ void debug_server_start(void)
         .method = HTTP_POST,
         .handler = mode_post_handler,
     };
+    const httpd_uri_t ble_start = {
+        .uri = "/api/ble/start",
+        .method = HTTP_POST,
+        .handler = ble_start_handler,
+    };
 
-    httpd_register_uri_handler(s_httpd, &options);
-    httpd_register_uri_handler(s_httpd, &status);
-    httpd_register_uri_handler(s_httpd, &usage);
-    httpd_register_uri_handler(s_httpd, &push);
-    httpd_register_uri_handler(s_httpd, &ota);
-    httpd_register_uri_handler(s_httpd, &ota_status);
-    httpd_register_uri_handler(s_httpd, &reboot);
-    httpd_register_uri_handler(s_httpd, &mode);
+    register_uri_checked(&options);
+    register_uri_checked(&status);
+    register_uri_checked(&usage);
+    register_uri_checked(&health);
+    register_uri_checked(&logs);
+    register_uri_checked(&heap);
+    register_uri_checked(&push);
+    register_uri_checked(&redraw);
+    register_uri_checked(&ota);
+    register_uri_checked(&ota_status);
+    register_uri_checked(&reboot);
+    register_uri_checked(&mode);
+    register_uri_checked(&ble_start);
     ESP_LOGI(TAG, "HTTP debug API started");
 }

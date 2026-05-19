@@ -66,6 +66,16 @@ key_event_t gpio_key_get_event(void)
     return ev; /* all zeros → no event */
 }
 
+bool gpio_key_up_pressed(void)
+{
+    return gpio_get_level(KEY_UP_GPIO) == 0;
+}
+
+bool gpio_key_down_pressed(void)
+{
+    return gpio_get_level(KEY_DOWN_GPIO) == 0;
+}
+
 /* ── Key Scan Task ───────────────────────────────────────────── */
 void key_task(void *arg)
 {

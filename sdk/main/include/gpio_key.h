@@ -34,6 +34,12 @@ void gpio_key_init(void);
 key_event_t gpio_key_get_event(void);
 
 /**
+ * @brief Return true when a key is physically pressed (active-low).
+ */
+bool gpio_key_up_pressed(void);
+bool gpio_key_down_pressed(void);
+
+/**
  * @brief FreeRTOS task that scans the two buttons.
  *
  * Stack: ~2KB, priority: 10.

@@ -8,7 +8,9 @@ idf_component_register(
         wallpaper.c
         cloud_ota.c
         claude_usage.c
+        ble_usage.c
         debug_server.c
+        diag_log.c
         ui_render.c
         ble_pager.c
         nvs_utils.c

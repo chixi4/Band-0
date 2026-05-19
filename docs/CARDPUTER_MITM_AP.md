@@ -58,7 +58,7 @@ cardputer-ap-arduino/
 
 - PlatformIO Core 6.1.19（已安装）
 - `espressif32@6.7.0` 平台（已安装）
-- ESP32-S3 设备通过 USB 连接（本机当前枚举为 `/dev/cu.usbmodem12401`，重新插拔后端口号可能变化）
+- ESP32-S3 设备通过 USB 连接（本机当前枚举为 `/dev/cu.usbmodem12201`，重新插拔后端口号可能变化）
 
 ### 编译
 
@@ -69,9 +69,26 @@ pio run
 
 ### 烧录 ADV
 
+PlatformIO 默认 stub 上传在当前 ADV 上会失败，现阶段用 esptool `--no-stub` 稳定烧录：
+
 ```bash
-cd /Users/yuookie/Documents/dev/Band-0/cardputer-ap-arduino
-pio run -e m5stack-cardputer -t upload --upload-port /dev/cu.usbmodem12401
+cd /Users/yuookie/Documents/dev/Band-0
+"/opt/homebrew/Cellar/platformio/6.1.19_1/libexec/bin/python" \
+  "/Users/yuookie/.platformio/packages/tool-esptoolpy/esptool.py" \
+  --chip esp32s3 \
+  --port /dev/cu.usbmodem12201 \
+  --baud 115200 \
+  --before default_reset \
+  --after hard_reset \
+  --no-stub \
+  write_flash -z \
+  --flash_mode dio \
+  --flash_freq 80m \
+  --flash_size 8MB \
+  0x0000 cardputer-ap-arduino/.pio/build/m5stack-cardputer/bootloader.bin \
+  0x8000 cardputer-ap-arduino/.pio/build/m5stack-cardputer/partitions.bin \
+  0xe000 /Users/yuookie/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+  0x10000 cardputer-ap-arduino/.pio/build/m5stack-cardputer/firmware.bin
 ```
 
 当前工程已固定 `espressif32@6.7.0`，并显式使用 `partitions_8mb.csv`。如果遇到自动进 bootloader 失败，再按屏幕提示长按/短按 ADV 的 BOOT/RESET；不要擦 Band-0。
@@ -100,21 +117,29 @@ pio run -e m5stack-cardputer -t upload --upload-port /dev/cu.usbmodem12401
 
 ### 当前验证状态
 
+2026-05-20 更新：
+
+- Band-0 当前稳定固件为 `1.2.5-rebuilt-baseline10`。
+- ADV 当前暂存 `/band0.bin`：大小 `889952` 字节，SHA256 `1f1d9e5c5614aa6e277f724c4d2c783ac9a4dafd461f0a312b6a3509bfc01ca2`。
+- 已完成多次真实 ADV 网络 OTA：当前 `fw_download_count=4`、`fw_last_served_size=889952`，Band-0 回到 `baseline10`，`/api/status` 显示 `health=ok`、`ota.success=true`、`result_for=12`。
+- updater 曾因 main task 栈只有 3072 字节在 EPD 刷新时 `Stack protection fault`，现已把 updater 主任务栈提升到 8192 字节并通过 OTA 验证。
+- `baseline10` 默认关闭 BLE 自动启动和蜂鸣器：这保留约 38 KB heap 给 HTTP/OTA；需要 BLE 时使用 `POST /api/ble/start` 手动启动。
+
 - ADV AP 固件已在本机编译并刷入 Cardputer ADV。
-- 最新 ADV app 固件：`cardputer-ap-arduino/.pio/build/m5stack-cardputer/firmware.bin`，大小约 919 KB。
-- Band-0 自定义主固件已用 ESP-IDF v5.5.4 编译通过：`sdk/build/Quote_0_ESP8684_IDF.bin`，大小约 835 KB。
+- 最新 ADV app 固件：`cardputer-ap-arduino/.pio/build/m5stack-cardputer/firmware.bin`，大小 `943392` 字节。
+- Band-0 baseline1 主固件已用 ESP-IDF v5.5.4 编译通过：`sdk/build/Quote_0_ESP8684_IDF.bin`，大小 `1050192` 字节。
 - 这个 Band-0 完整功能版适合写入 `main` 分区（0x10000，大小 0x140000），但不能写入 `updater` 分区（0x150000，大小 0xA0000）。
 - Band-0 自定义主固件内置 HTTP 调试 API：`/api/status`、`/api/usage`、`/api/push`、`/api/ota/url`。
 - Band-0 自定义主固件还内置恢复/调试 API：`GET /api/ota/status`、`POST /api/mode`、`POST /api/reboot`。
 - 自定义主固件不会自动查官方云并直接 OTA；更新必须由本地 API 显式写入 URL，再交给 updater。
 - 2026-05-19 实机 UART 验证：自定义主固件可正常启动到 `All subsystems initialized`，按键、HTTP server、EPD init 均启动，无 `Guru Meditation` 重启。
-- 当前源代码最新构建：`sdk/build/Quote_0_ESP8684_IDF.bin`，版本 `1.2.5-rebuilt-usage4`，大小 `826736` 字节，SHA256 `4cd654b748ca3f1b3c628e3a9f6f83c0f8a2258e1f725adf028050c4e7e61352`。
+- 当前源代码最新构建：`sdk/build/Quote_0_ESP8684_IDF.bin`，版本 `1.2.5-rebuilt-baseline1`，大小 `1050192` 字节，SHA256 `af10121f6fc55e2f22ef2fd45370c7ac167140d795a287ce2cc9ed00b63cbafc`。
 - 2026-05-19 实机 UART 验证：`usage3` 已刷入 Band-0 `main` 分区并正常启动，启动日志见 `logs/band0_usage3_boot.log`。
 - `usage3` 修复项：Wi-Fi STA 初始化 race、主循环误清 OTA URL、断电后掉回 MBTI/空框、5 分钟休眠清屏、重启后用量数据丢失、首帧电子纸残影概率。
 - `usage3` 断电重启验证：设备默认进入 `APP_MODE_CLAUDE_USAGE`，从 NVS 恢复上次 Claude 用量 payload，HTTP 状态显示 `transport=cache`、`stale=true`，随后桥接器同步后恢复 `transport=wifi`、`stale=false`。日志见 `logs/band0_usage3_reboot_cache.log`。
 - 2026-05-19 网络 OTA 演练：`usage3` 通过 ADV 成功触发同版本 OTA，ADV 记录 `fw_download_count=1`、`fw_last_served_size=825696`，Band-0 回到 `usage3` 主程序，证明 URL 不再被提前清掉。
 - `usage4` 修复项：为后续 OTA 增加 `armed_attempt` 标记，回到 main 后自动清理 OTA URL 和旧 `fail_reason`，避免状态页长期显示历史 `no_url`。
-- 当前 ADV 已暂存 `usage3` 固件到 `/band0.bin`；`usage4` 上传到 80% 时 ADV USB CDC 重新枚举失败，尚未完成上传/OTA。重新插好 ADV USB 后继续上传 `usage4`。
+- 当前 ADV 已重新刷入 bridge 固件，并已暂存 `baseline1` 到 `/band0.bin`：`firmware_size=1050192`，SHA256 `af10121f6fc55e2f22ef2fd45370c7ac167140d795a287ce2cc9ed00b63cbafc`。
 - 每次重编 Band-0 固件后，都要重新执行 `adv_bridge.py upload` 再做网络 OTA；不要假设 ADV `/fw.bin` 已经是最新构建。
 - 设备 fallback 调试热点为 `Band-0 Setup`，AP 地址 `192.168.50.1`。不要再用 `192.168.4.1` 访问 Band-0 自身；`192.168.4.1` 留给 Cardputer ADV MITM AP。
 
@@ -148,12 +173,12 @@ python3 tools/adv_bridge.py status
 #### 2. 上传 Band-0 OTA 固件到 ADV
 
 ```bash
-python3 tools/adv_bridge.py upload sdk/build/Quote_0_ESP8684_IDF.bin --chunk-size 64
+python3 tools/adv_bridge.py upload sdk/build/Quote_0_ESP8684_IDF.bin --chunk-size 128
 ```
 
 ADV 会把固件存为 `http://192.168.4.1/fw.bin`。
 
-实测 USB CDC 在 824 KB 固件上传时，`64` 字节块比默认块更稳；如果未来 ADV 固件继续优化串口接收缓冲，可再调大。
+实测 `128` 字节块可完整上传 `1050192` 字节 baseline1。`256/1024` 字节块会卡在 `fw_chunk` 响应，当前工具已限制最大安全块为 128。
 
 #### 3A. 如果 Band-0 现在显示/开启 `Band-0 Setup`
 
@@ -385,6 +410,22 @@ except socket.timeout:
 **原因**：杜邦线/触点/GND/供电在写入期间抖动，或高速串口边沿不稳。此时通常只是 app 分区半写，不是变砖，因为 ROM 下载器仍可进入。
 
 **解决**：保持 BOOT/GND/RX/TX 稳定，降到 115200 重新写 `0x10000` 主 app。2026-05-19 实测 115200 写入 `825696` 字节成功并通过 hash 校验。
+
+### 8. ADV PlatformIO 上传 stub 失败
+
+**现象**：`pio run -t upload` 能识别 `ESP32-S3`，但在 `Running stub...` 后失败：
+
+```text
+Unable to verify flash chip connection (No serial data received.)
+```
+
+**解决**：不用 PlatformIO 默认 stub 上传，改用上文记录的 esptool `--no-stub write_flash`。2026-05-19 已用该方式成功刷回 ADV bridge。
+
+### 9. ADV 上传 Band-0 固件时大 chunk 卡住
+
+**现象**：`adv_bridge.py upload --chunk-size 256` 或更大时，`fw_begin` 成功，但第一个 `fw_chunk` 超时。
+
+**解决**：固定 `--chunk-size 128`。当前工具已经禁止超过 128 的上传块，避免 ADV 卡在上传中间态。
 
 ---
 

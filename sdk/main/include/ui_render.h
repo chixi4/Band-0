@@ -55,6 +55,11 @@ void ui_draw_bt_pager(bool english);
 void ui_draw_claude_usage(bool english);
 
 /**
+ * @brief Draw a safe diagnostic status page for recovery.
+ */
+void ui_draw_safe_status(bool english);
+
+/**
  * @brief Handle a key event in the context of the current mode.
  * @return true if the event was consumed.
  */

@@ -8,7 +8,13 @@
 extern "C" {
 #endif
 
-#define BAND0_FIRMWARE_VERSION "1.2.5-rebuilt-usage4"
+#define BAND0_FIRMWARE_VERSION "1.2.5-rebuilt-baseline10"
+
+/* Baseline policy: keep the control plane quiet and memory-rich by default.
+ * BLE and buzzer can be enabled later once the Wi-Fi OTA path is proven stable.
+ */
+#define BAND0_AUTO_START_BLE 0
+#define BAND0_BUZZER_ENABLED 0
 
 /* ── Application Modes ─────────────────────────────────────── */
 typedef enum {
@@ -20,6 +26,7 @@ typedef enum {
     APP_MODE_MBTI_GUIDE = 5,
     APP_MODE_CLAUDE_USAGE = 6,
     APP_MODE_SETUP   = 7,
+    APP_MODE_SAFE_STATUS = 8,
 } app_mode_t;
 
 /* ── Application Configuration (stored in NVS) ─────────────── */

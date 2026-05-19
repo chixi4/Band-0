@@ -20,6 +20,14 @@ typedef struct {
     const char *pwd[3];
 } ota_wifi_request_t;
 
+typedef struct {
+    bool sta_connected;
+    bool portal_active;
+    int  state;
+    int  retry_count;
+    char ip[16];
+} wifi_runtime_status_t;
+
 /**
  * @brief Save an OTA+Wi-Fi request to NVS and trigger updater reboot.
  *
@@ -67,6 +75,11 @@ int wifi_connect_or_portal(void);
  * @brief Initialize Wi-Fi in STA+SoftAP mode.
  */
 void wifi_init(void);
+
+/**
+ * @brief Snapshot Wi-Fi runtime state for health/status endpoints.
+ */
+void wifi_get_runtime_status(wifi_runtime_status_t *out);
 
 #ifdef __cplusplus
 }

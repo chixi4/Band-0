@@ -31,6 +31,7 @@ except ImportError as exc:  # pragma: no cover - environment diagnostic
 
 DEFAULT_BAUD = 115200
 DEFAULT_CHUNK = 128
+MAX_SAFE_CHUNK = 128
 
 
 class BridgeError(RuntimeError):
@@ -48,7 +49,14 @@ def sha256_file(path: Path) -> str:
 def candidate_ports() -> list[str]:
     ports: list[str] = []
     for info in serial.tools.list_ports.comports():
-        ports.append(info.device)
+        dev = info.device
+        if any(token in dev for token in (
+            "usbmodem",
+            "usbserial",
+            "wchusbserial",
+            "SLAB_USBtoUART",
+        )):
+            ports.append(dev)
     for pattern in (
         "/dev/cu.usbmodem*",
         "/dev/cu.usbserial*",
@@ -163,6 +171,12 @@ def print_json(obj: Any) -> None:
 
 
 def upload_firmware(bridge: AdvBridge, path: Path, chunk_size: int = DEFAULT_CHUNK) -> dict[str, Any]:
+    if chunk_size > MAX_SAFE_CHUNK:
+        raise BridgeError(
+            f"chunk size {chunk_size} is above the verified ADV bridge limit "
+            f"({MAX_SAFE_CHUNK}); use --chunk-size {MAX_SAFE_CHUNK}"
+        )
+
     path = path.resolve()
     if not path.exists():
         raise BridgeError(f"firmware not found: {path}")
