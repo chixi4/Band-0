@@ -264,10 +264,14 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "device", "Band-0");
     cJSON_AddStringToObject(root, "firmware", BAND0_FIRMWARE_VERSION);
+    cJSON_AddStringToObject(root, "runtime", "local-base");
+    cJSON_AddStringToObject(root, "official_reference", "1.2.6");
+    cJSON_AddBoolToObject(root, "official_compat_mode", true);
     cJSON_AddNumberToObject(root, "mode", current_mode());
     cJSON_AddNumberToObject(root, "uptime_ms", esp_timer_get_time() / 1000);
     cJSON_AddNumberToObject(root, "diag_count", diag_log_count());
     cJSON_AddBoolToObject(root, "display_ready", display_is_ready());
+    cJSON_AddBoolToObject(root, "display_inverted", display_get_inverted());
     add_health_json(root);
     add_wifi_json(root);
     add_ble_json(root);
@@ -354,8 +358,9 @@ static esp_err_t usage_push_handler(httpd_req_t *req)
 
     bool ok = claude_usage_receive_json(body, "wifi");
     if (ok) {
-        set_current_mode(APP_MODE_CLAUDE_USAGE);
-        ui_request_redraw();
+        if (current_mode() == APP_MODE_CLAUDE_USAGE) {
+            ui_request_redraw();
+        }
         ble_usage_notify_status();
         diag_log_event("I", "usage", "push via wifi");
     }
@@ -394,6 +399,29 @@ static esp_err_t redraw_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "ok", true);
     cJSON_AddStringToObject(root, "message", "redraw requested");
+    esp_err_t ret = send_json(req, "200 OK", root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static esp_err_t display_invert_handler(httpd_req_t *req)
+{
+    bool invert = false;
+    char buf[128] = {0};
+    int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len > 0) {
+        cJSON *body = cJSON_Parse(buf);
+        if (body) {
+            cJSON *item = cJSON_GetObjectItem(body, "invert");
+            if (cJSON_IsBool(item)) invert = cJSON_IsTrue(item);
+            cJSON_Delete(body);
+        }
+    }
+    display_set_inverted(invert);
+    ui_request_redraw();
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddBoolToObject(root, "inverted", display_get_inverted());
     esp_err_t ret = send_json(req, "200 OK", root);
     cJSON_Delete(root);
     return ret;
@@ -618,6 +646,11 @@ void debug_server_start(void)
         .method = HTTP_POST,
         .handler = redraw_handler,
     };
+    const httpd_uri_t display_invert = {
+        .uri = "/api/display/invert",
+        .method = HTTP_POST,
+        .handler = display_invert_handler,
+    };
     const httpd_uri_t ota = {
         .uri = "/api/ota/url",
         .method = HTTP_POST,
@@ -652,6 +685,7 @@ void debug_server_start(void)
     register_uri_checked(&heap);
     register_uri_checked(&push);
     register_uri_checked(&redraw);
+    register_uri_checked(&display_invert);
     register_uri_checked(&ota);
     register_uri_checked(&ota_status);
     register_uri_checked(&reboot);

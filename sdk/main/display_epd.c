@@ -18,8 +18,10 @@ static const char *TAG = "display";
 /* 200x200 @ 2bpp = 10000 bytes */
 /* 2 bits per pixel: 00=white, 11=black */
 static uint8_t s_fb[JD79650_RAW_BYTES];
+static uint8_t s_tx_fb[JD79650_RAW_BYTES];
 static bool    s_ready = false;
 static bool    s_redraw_pending = false;
+static bool    s_inverted = false;
 
 /* ── Init ────────────────────────────────────────────────────── */
 int display_init(void)
@@ -55,8 +57,31 @@ void display_clear(void)
 void display_refresh(void)
 {
     if (!display_is_ready()) return;
-    jd79650_display_frame(s_fb);
+
+    if (s_inverted) {
+        /* Apply inversion to a transmit copy. Do not mutate s_fb; repeated
+         * refreshes or redraw retries must not toggle the logical frame. */
+        for (int i = 0; i < (int)sizeof(s_fb); i++) {
+            s_tx_fb[i] = (uint8_t)~s_fb[i];
+        }
+        jd79650_display_frame(s_tx_fb);
+    } else {
+        jd79650_display_frame(s_fb);
+    }
     s_redraw_pending = false;
+}
+
+void display_set_inverted(bool invert)
+{
+    if (s_inverted != invert) {
+        s_inverted = invert;
+        s_redraw_pending = true;
+    }
+}
+
+bool display_get_inverted(void)
+{
+    return s_inverted;
 }
 
 void display_begin_frame(void)
@@ -173,36 +198,46 @@ void display_text_at(int x, int y, const char *text, int style)
 }
 
 /* ── Shape Drawing ───────────────────────────────────────────── */
-void display_fill_rounded_rect(int x, int y, int w, int h, int r)
+static bool rounded_rect_contains(int col, int row, int x, int y, int w, int h, int r)
+{
+    if (w <= 0 || h <= 0) return false;
+    if (r <= 0) return true;
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+
+    if (col < x || col >= x + w || row < y || row >= y + h) return false;
+
+    int cx = col;
+    int cy = row;
+    if (col < x + r) cx = x + r;
+    else if (col >= x + w - r) cx = x + w - r - 1;
+    if (row < y + r) cy = y + r;
+    else if (row >= y + h - r) cy = y + h - r - 1;
+
+    int dx = col - cx;
+    int dy = row - cy;
+    return dx * dx + dy * dy <= r * r;
+}
+
+static void display_fill_rounded_rect_color(int x, int y, int w, int h, int r, bool black)
 {
     if (!display_is_ready()) return;
 
     for (int row = y; row < y + h && row < EPD_HEIGHT; row++) {
+        if (row < 0) continue;
         for (int col = x; col < x + w && col < EPD_WIDTH; col++) {
-            /* Simple rounded corner check */
-            bool in_corner = false;
-            if (row < y + r && col < x + r) {
-                in_corner = ((row - y - r) * (row - y - r) +
-                             (col - x - r) * (col - x - r) > r * r);
-            } else if (row < y + r && col >= x + w - r) {
-                in_corner = ((row - y - r) * (row - y - r) +
-                             (col - x - w + r) * (col - x - w + r) > r * r);
-            } else if (row >= y + h - r && col < x + r) {
-                in_corner = ((row - y - h + r) * (row - y - h + r) +
-                             (col - x - r) * (col - x - r) > r * r);
-            } else if (row >= y + h - r && col >= x + w - r) {
-                in_corner = ((row - y - h + r) * (row - y - h + r) +
-                             (col - x - w + r) * (col - x - w + r) > r * r);
-            }
-
-            if (!in_corner) {
-                int idx = row * (EPD_WIDTH / 4) + (col / 4);
-                int shift = 6 - 2 * (col % 4);
-                s_fb[idx] |= (0x03 << shift);
+            if (col < 0) continue;
+            if (rounded_rect_contains(col, row, x, y, w, h, r)) {
+                display_draw_pixel(col, row, black);
             }
         }
     }
     s_redraw_pending = true;
+}
+
+void display_fill_rounded_rect(int x, int y, int w, int h, int r)
+{
+    display_fill_rounded_rect_color(x, y, w, h, r, true);
 }
 
 void display_outline_rect(int x, int y, int w, int h)
@@ -224,6 +259,14 @@ void display_outline_rect(int x, int y, int w, int h)
             s_fb[idx] |= (0x03 << shift);
         }
     }
+    s_redraw_pending = true;
+}
+
+void display_outline_rounded_rect(int x, int y, int w, int h, int r)
+{
+    if (!display_is_ready()) return;
+    display_fill_rounded_rect_color(x, y, w, h, r, true);
+    display_fill_rounded_rect_color(x + 1, y + 1, w - 2, h - 2, r > 0 ? r - 1 : 0, false);
     s_redraw_pending = true;
 }
 

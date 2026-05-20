@@ -85,6 +85,14 @@ void display_fill_rounded_rect(int x, int y, int w, int h, int r);
 void display_outline_rect(int x, int y, int w, int h);
 
 /**
+ * @brief Draw a rounded rectangular outline.
+ *
+ * This matches the official list-row treatment more closely than a hard
+ * rectangular outline.
+ */
+void display_outline_rounded_rect(int x, int y, int w, int h, int r);
+
+/**
  * @brief Push a raw 10000-byte 2bpp bitmap to the framebuffer.
  *
  * Used for wallpaper display.
@@ -106,6 +114,20 @@ void display_tick_200ms(void);
  *        Used by wallpaper save/upload logic.
  */
 const uint8_t *display_get_framebuffer(void);
+
+/**
+ * @brief Enable or disable global display color inversion.
+ *
+ * When enabled, all pixels are inverted before sending to the EPD:
+ * black ↔ white. The framebuffer itself is not permanently modified;
+ * inversion is applied on each refresh.
+ */
+void display_set_inverted(bool invert);
+
+/**
+ * @brief Return true if display inversion is currently active.
+ */
+bool display_get_inverted(void);
 
 #ifdef __cplusplus
 }
