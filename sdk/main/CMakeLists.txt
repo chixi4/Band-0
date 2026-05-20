@@ -8,6 +8,7 @@ idf_component_register(
         wallpaper.c
         cloud_ota.c
         claude_usage.c
+        power_monitor.c
         ble_usage.c
         debug_server.c
         diag_log.c
@@ -30,5 +31,6 @@ idf_component_register(
         jd79650
         json
         driver
+        esp_adc
         esp_timer
 )

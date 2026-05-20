@@ -32,6 +32,7 @@ typedef struct {
 void claude_usage_init(void);
 void claude_usage_reset(const char *hint);
 bool claude_usage_receive_json(const char *line, const char *transport);
+bool claude_usage_visual_changed(void);
 void claude_usage_get_state(claude_usage_state_t *out);
 
 #ifdef __cplusplus
