@@ -1,338 +1,155 @@
 /**
- * Main UI rendering for Band-0.
+ * Official-style Band-0 UI shell.
  *
- * Draws screens for all application modes:
- *   - Answers / Fortune cards
- *   - Merit (功德) counter
- *   - BLE pager
- *   - Clock / lock screen
- *   - MBTI guide
- *   - Setup menu
- *
- * Calls display_epd functions to draw into the framebuffer,
- * then flushes to the EPD.
+ * The goal is to preserve the recovered 1.2.6 interaction grammar while adding
+ * two local extensions: a native-looking Usage app entry and a Wireless settings
+ * submenu for ADV/local API/OTA/BLE diagnostics.
  */
 
-#include <string.h>
 #include <stdio.h>
-#include "esp_log.h"
+#include <string.h>
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "app_config.h"
+#include "ble_pager.h"
+#include "ble_usage.h"
+#include "claude_usage.h"
 #include "display_epd.h"
 #include "gpio_key.h"
-#include "wallpaper.h"
+#include "nvs_utils.h"
 #include "ui_render.h"
-#include "claude_usage.h"
+#include "wallpaper.h"
+#include "wifi_config.h"
 
-/* ── Global Redraw Flag ──────────────────────────────────────── */
 static bool s_redraw_requested = true;
-static int  s_selected_row = 0;
 
-/* ── Helpers ─────────────────────────────────────────────────── */
-void ui_request_redraw(void)    { s_redraw_requested = true; }
+typedef enum {
+    SETTINGS_ROOT = 0,
+    SETTINGS_WIRELESS_DETAIL = 1,
+} settings_page_t;
+
+typedef enum {
+    APP_ROW_ANSWERS = 0,
+    APP_ROW_FORTUNE,
+    APP_ROW_MERIT,
+    APP_ROW_BT_PAGER,
+    APP_ROW_MBTI,
+    APP_ROW_USAGE,
+    APP_ROW_SETTINGS,
+    APP_ROW_COUNT,
+} app_row_t;
+
+typedef enum {
+    SETTINGS_LANGUAGE = 0,
+    SETTINGS_SLEEP,
+    SETTINGS_KEY_SOUND,
+    SETTINGS_GUIDE,
+    SETTINGS_WIRELESS,
+    SETTINGS_UPDATE,
+    SETTINGS_ABOUT,
+    SETTINGS_COUNT,
+} settings_row_t;
+
+typedef enum {
+    WIRELESS_WIFI = 0,
+    WIRELESS_LOCAL_API,
+    WIRELESS_OTA,
+    WIRELESS_LOGS,
+    WIRELESS_BLE,
+    WIRELESS_COUNT,
+} wireless_row_t;
+
+static int s_app_selected = APP_ROW_USAGE;
+static int s_settings_selected = SETTINGS_WIRELESS;
+static int s_wireless_selected = WIRELESS_WIFI;
+static settings_page_t s_settings_page = SETTINGS_ROOT;
+
+static bool s_answers_visible = false;
+static int s_answers_index = 0;
+static bool s_fortune_visible = false;
+static int s_fortune_index = 0;
+static bool s_mbti_detail = false;
+static int s_mbti_index = 0;
+
+static const char *APP_LABELS[APP_ROW_COUNT] = {
+    "Answers",
+    "Fortune",
+    "Merit",
+    "BT Pager",
+    "MBTI Guide",
+    "Usage",
+    "Settings",
+};
+
+static const app_mode_t APP_MODES[APP_ROW_COUNT] = {
+    APP_MODE_ANSWERS,
+    APP_MODE_FORTUNE,
+    APP_MODE_MERIT,
+    APP_MODE_BT_PAGER,
+    APP_MODE_MBTI_GUIDE,
+    APP_MODE_CLAUDE_USAGE,
+    APP_MODE_SETUP,
+};
+
+static const char *SETTINGS_LABELS[SETTINGS_COUNT] = {
+    "Language",
+    "Sleep Time",
+    "Key Sound",
+    "Guide Pages",
+    "Wireless",
+    "Update",
+    "About Dot.",
+};
+
+static const char *WIRELESS_LABELS[WIRELESS_COUNT] = {
+    "Wi-Fi",
+    "Local API",
+    "OTA",
+    "Logs",
+    "BLE",
+};
+
+static const char *ANSWERS[] = {
+    "IT IS SENSIBLE",
+    "BETTER TO WAIT",
+    "DO IT EARLY",
+    "REMAIN FLEXIBLE",
+    "SETTING PRIORITIES",
+    "KEEP IT SIMPLE",
+    "UNPREDICTABLE",
+    "LOOK CLOSER",
+};
+
+static const char *FORTUNES[] = {
+    "Finish one task first.",
+    "Check urgency first.",
+    "Sleep earlier tonight.",
+    "Delete one small issue.",
+    "Promise one less thing.",
+    "Review before starting.",
+    "Write the criteria.",
+    "Protect your rhythm.",
+};
+
+static const char *MBTI_TYPES[] = {
+    "INTJ", "INTP", "ENTJ", "ENTP",
+    "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+    "ISTP", "ISFP", "ESTP", "ESFP",
+};
+
+void ui_request_redraw(void) { s_redraw_requested = true; }
 void ui_clear_redraw_request(void) { s_redraw_requested = false; }
-bool ui_redraw_requested(void)  { return s_redraw_requested; }
-
-/* ── Key Event Handling per Mode ─────────────────────────────── */
-bool ui_handle_key_event(key_event_t ev)
-{
-    if (ev.type != 1 || ev.event == 0) return false;
-
-    LOGI("key: event=%d long=%d", ev.event, ev.is_long);
-
-    app_mode_t mode = current_mode();
-
-    switch (ev.event) {
-    case KEY_EVENT_CONFIRM:  /* long press down = confirm */
-        if (mode == APP_MODE_SETUP) {
-            /* Execute selected setup option */
-            LOGI("setup: selected row %d", s_selected_row);
-        }
-        return true;
-
-    case KEY_EVENT_BACK:     /* long press up = back */
-        set_current_mode(APP_MODE_CLOCK);
-        ui_request_redraw();
-        return true;
-
-    case KEY_EVENT_NEXT:     /* short press down = next */
-        if (mode == APP_MODE_SETUP) {
-            s_selected_row++;
-            if (s_selected_row > 5) s_selected_row = 0;
-            ui_request_redraw();
-        } else if (mode < APP_MODE_SETUP) {
-            set_current_mode(mode + 1);
-            ui_request_redraw();
-        }
-        return true;
-
-    case KEY_EVENT_PREV:     /* short press up = prev */
-        if (mode == APP_MODE_SETUP) {
-            s_selected_row--;
-            if (s_selected_row < 0) s_selected_row = 5;
-            ui_request_redraw();
-        } else if (mode > APP_MODE_ANSWERS) {
-            set_current_mode(mode - 1);
-            ui_request_redraw();
-        }
-        return true;
-    }
-    return false;
-}
-
-/* ── Screen: Clock ───────────────────────────────────────────── */
-void ui_draw_clock_screen(bool english)
-{
-    display_begin_frame();
-
-    int y = 40;
-    display_text(y, english ? "12:34" : "12:34", TEXT_STYLE_TITLE);
-    y += 30;
-
-    /* Date line */
-    display_text(y, english ? "Mon, Jan 1" : "2024-01-01 周一", TEXT_STYLE_NORMAL);
-    y += 30;
-
-    /* Status: Wi-Fi, BLE */
-    display_text(y, english ? "Wi-Fi Connected" : "Wi-Fi 已连接", TEXT_STYLE_NORMAL);
-    y += 20;
-
-    display_text(y, english ? "BLE Pager: OFF" : "BLE 翻页器: 关闭", TEXT_STYLE_NORMAL);
-    y += 30;
-
-    /* Footer hint */
-    display_text(180, english ? "Hold UP=back  DOWN=next" : "上=返回  下=切换", TEXT_STYLE_NORMAL);
-
-    /* Draw battery */
-    display_draw_battery(-1, false);
-
-    ui_flush_display();
-}
-
-/* ── Screen: Setup Menu ──────────────────────────────────────── */
-void ui_draw_setup_menu(bool english)
-{
-    display_begin_frame();
-
-    int y = 10;
-    display_text(y, english ? "SETTINGS" : "设置", TEXT_STYLE_TITLE);
-    y += 25;
-
-    const char *items[] = {
-        english ? "Language"       : "语言",
-        english ? "Sleep Timer"    : "休眠时间",
-        english ? "BLE Pager"      : "蓝牙翻页器",
-        english ? "Merit Counter"  : "功德计数",
-        english ? "MBTI Guide"     : "MBTI 指南",
-        english ? "About"          : "关于",
-    };
-
-    for (int i = 0; i < 6; i++) {
-        if (i == s_selected_row) {
-            display_fill_rounded_rect(8, y - 2, 184, 18, 3);
-            display_text(y, items[i], TEXT_STYLE_INVERTED);
-        } else {
-            display_outline_rect(8, y - 2, 184, 18);
-            display_text(y, items[i], TEXT_STYLE_NORMAL);
-        }
-        y += 22;
-    }
-
-    display_text(180, english ? "Short UP/DN = navigate" : "短按上下 = 导航", TEXT_STYLE_NORMAL);
-
-    ui_flush_display();
-}
-
-/* ── Screen: Answer / Fortune Card ───────────────────────────── */
-void ui_draw_answer_or_fortune(bool english)
-{
-    display_begin_frame();
-
-    int y = 30;
-    display_text(y, english ? "Answer" : "答案之书", TEXT_STYLE_TITLE);
-    y += 40;
-
-    const char *msg = english
-        ? "Ask a yes/no question\nand press DOWN."
-        : "想一个是非问题\n然后按下键。";
-    display_text(y, msg, TEXT_STYLE_NORMAL);
-
-    display_text(170, english ? "Hold UP to exit" : "长按上键退出", TEXT_STYLE_NORMAL);
-    ui_flush_display();
-}
-
-/* ── Screen: Fortune / 签语 ──────────────────────────────────── */
-void ui_draw_fortune(bool english)
-{
-    display_begin_frame();
-
-    int y = 30;
-    display_text(y, english ? "Fortune" : "电子签语", TEXT_STYLE_TITLE);
-    y += 40;
-
-    const char *msg = english
-        ? "Shake or press DOWN\nfor a fortune."
-        : "摇一摇或按下键\n抽取签语。";
-    display_text(y, msg, TEXT_STYLE_NORMAL);
-
-    display_text(170, english ? "Hold UP to exit" : "长按上键退出", TEXT_STYLE_NORMAL);
-    ui_flush_display();
-}
-
-/* ── Screen: Merit Counter (功德) ────────────────────────────── */
-void ui_draw_merit_counter(bool english)
-{
-    display_begin_frame();
-
-    int y = 30;
-    display_text(y, english ? "Merit" : "功德", TEXT_STYLE_TITLE);
-    y += 50;
-
-    char count[16];
-    snprintf(count, sizeof(count), "%d", g_config.merit_count);
-    display_text(y, count, TEXT_STYLE_INVERTED);
-    y += 40;
-
-    display_text(y, english ? "Press DOWN to add 1" : "按下键 +1", TEXT_STYLE_NORMAL);
-
-    display_text(170, english ? "Hold UP to exit" : "长按上键退出", TEXT_STYLE_NORMAL);
-    ui_flush_display();
-}
-
-/* ── Screen: MBTI Guide ──────────────────────────────────────── */
-void ui_draw_mbti_guide(bool english)
-{
-    display_begin_frame();
-
-    int y = 10;
-    display_text(y, english ? "MBTI Guide" : "MBTI 指南", TEXT_STYLE_TITLE);
-    y += 25;
-
-    const char *types[] = {"INTJ", "INTP", "ENTJ", "ENTP",
-                           "INFJ", "INFP", "ENFJ", "ENFP",
-                           "ISTJ", "ISFJ", "ESTJ", "ESFJ",
-                           "ISTP", "ISFP", "ESTP", "ESFP"};
-    int col = 0, row_y = y;
-    for (int i = 0; i < 16; i++) {
-        int x = 10 + col * 48;
-        display_text_at(x, row_y, types[i], TEXT_STYLE_NORMAL);
-        col++;
-        if (col >= 4) {
-            col = 0;
-            row_y += 18;
-        }
-    }
-
-    display_text(170, english ? "Hold UP to exit" : "长按上键退出", TEXT_STYLE_NORMAL);
-    ui_flush_display();
-}
-
-/* ── Screen: BT Pager ────────────────────────────────────────── */
-void ui_draw_bt_pager(bool english)
-{
-    display_begin_frame();
-
-    int y = 10;
-    display_text(y, english ? "BLE Pager" : "蓝牙翻页器", TEXT_STYLE_TITLE);
-    y += 25;
-
-    static const char *modes_zh[] = {"YXT协议", "PPT遥控", "手机呼叫", "拍照", "媒体", "阅读", "Vibe Coding"};
-    static const char *modes_en[] = {"YXT Proto", "PPT Remote", "Phone Pager", "Camera", "Media", "Reading", "Vibe Code"};
-
-    for (int i = 0; i < 7; i++) {
-        const char *label = english ? modes_en[i] : modes_zh[i];
-        if (i == s_selected_row) {
-            display_fill_rounded_rect(8, y - 2, 184, 18, 3);
-            display_text(y, label, TEXT_STYLE_INVERTED);
-        } else {
-            display_text(y, label, TEXT_STYLE_NORMAL);
-        }
-        y += 20;
-    }
-
-    display_text(180, english ? "Short UP/DN = switch" : "短按上下 = 切换模式", TEXT_STYLE_NORMAL);
-    ui_flush_display();
-}
-
-/* ── Screen: Claude Usage ───────────────────────────────────── */
-static int pct_for_bar(int pct)
-{
-    if (pct < 0) return 0;
-    if (pct > 100) return 100;
-    return pct;
-}
+bool ui_redraw_requested(void) { return s_redraw_requested; }
 
 static int text_width_px(const char *text)
 {
     return text ? (int)strlen(text) * 9 : 0;
 }
 
-static void draw_usage_bar(int x, int y, int w, int h, int pct)
-{
-    int fill = (w - 2) * pct_for_bar(pct) / 100;
-    display_outline_rect(x, y, w, h);
-    if (fill > 0) {
-        display_fill_rounded_rect(x + 1, y + 1, fill, h - 2, 0);
-    }
-}
-
-static void draw_digit_segment(int x, int y, int w, int h)
-{
-    display_fill_rounded_rect(x, y, w, h, 0);
-}
-
-static void draw_big_digit(int x, int y, int digit)
-{
-    static const uint8_t masks[10] = {
-        0x3f, /* 0: a b c d e f */
-        0x06, /* 1: b c */
-        0x5b, /* 2: a b d e g */
-        0x4f, /* 3: a b c d g */
-        0x66, /* 4: b c f g */
-        0x6d, /* 5: a c d f g */
-        0x7d, /* 6: a c d e f g */
-        0x07, /* 7: a b c */
-        0x7f, /* 8: all */
-        0x6f, /* 9: a b c d f g */
-    };
-    if (digit < 0 || digit > 9) return;
-
-    const int w = 16;
-    const int h = 28;
-    const int t = 3;
-    uint8_t m = masks[digit];
-
-    if (m & 0x01) draw_digit_segment(x + t,     y,             w - 2 * t, t);       /* a */
-    if (m & 0x02) draw_digit_segment(x + w - t, y + t,         t,         h / 2 - t); /* b */
-    if (m & 0x04) draw_digit_segment(x + w - t, y + h / 2,     t,         h / 2 - t); /* c */
-    if (m & 0x08) draw_digit_segment(x + t,     y + h - t,     w - 2 * t, t);       /* d */
-    if (m & 0x10) draw_digit_segment(x,         y + h / 2,     t,         h / 2 - t); /* e */
-    if (m & 0x20) draw_digit_segment(x,         y + t,         t,         h / 2 - t); /* f */
-    if (m & 0x40) draw_digit_segment(x + t,     y + h / 2 - 1, w - 2 * t, t);       /* g */
-}
-
-static int draw_big_pct(int x, int y, int pct)
-{
-    if (pct < 0) {
-        display_text_at(x, y + 8, "--%", TEXT_STYLE_NORMAL);
-        return x + 28;
-    }
-
-    char buf[5];
-    snprintf(buf, sizeof(buf), "%d", pct_for_bar(pct));
-
-    int cx = x;
-    for (int i = 0; buf[i] != '\0'; i++) {
-        draw_big_digit(cx, y, buf[i] - '0');
-        cx += 19;
-    }
-    display_text_at(cx + 1, y + 13, "%", TEXT_STYLE_NORMAL);
-    return cx + 12;
-}
-
 static void draw_text_clipped_style(int x, int y, const char *text, int max_chars, int style)
 {
-    char buf[44];
+    char buf[36];
     if (!text) text = "";
     if (max_chars > (int)sizeof(buf) - 1) max_chars = sizeof(buf) - 1;
     strlcpy(buf, text, (size_t)max_chars + 1);
@@ -344,7 +161,39 @@ static void draw_text_clipped(int x, int y, const char *text, int max_chars)
     draw_text_clipped_style(x, y, text, max_chars, TEXT_STYLE_NORMAL);
 }
 
-static void draw_clawd_logo(int x, int y)
+static void draw_centered(int y, const char *text, int style)
+{
+    int x = (EPD_WIDTH - text_width_px(text)) / 2;
+    if (x < 0) x = 0;
+    display_text_at(x, y, text, style);
+}
+
+static void draw_header(const char *title)
+{
+    int w = text_width_px(title) + 14;
+    int x = (EPD_WIDTH - w) / 2;
+    if (x < 6) x = 6;
+    display_fill_rounded_rect(x, 6, w, 24, 4);
+    draw_centered(12, title, TEXT_STYLE_INVERTED);
+    display_outline_rect(20, 42, 160, 1);
+}
+
+static void draw_footer(const char *text)
+{
+    display_outline_rect(10, 172, 180, 1);
+    draw_centered(181, text, TEXT_STYLE_NORMAL);
+}
+
+static void pixel_block(int x, int y, int w, int h, bool black)
+{
+    for (int yy = y; yy < y + h; yy++) {
+        for (int xx = x; xx < x + w; xx++) {
+            display_draw_pixel(xx, yy, black);
+        }
+    }
+}
+
+static void draw_clawd_icon(int x, int y, int scale, bool selected)
 {
     static const char *rows[] = {
         "...XXXXXXXXXXXX...",
@@ -353,83 +202,663 @@ static void draw_clawd_logo(int x, int y)
         "...XXXXXXXXXXXX...",
         "....X.X....X.X....",
     };
-
+    bool black = !selected;
+    int cw = scale;
+    int ch = scale * 2;
+    if (cw < 1) cw = 1;
+    if (ch < 2) ch = 2;
     for (int row = 0; row < 5; row++) {
         for (int col = 0; rows[row][col] != '\0'; col++) {
             if (rows[row][col] == 'X') {
-                display_fill_rounded_rect(x + col * 2, y + row * 4, 2, 4, 0);
+                pixel_block(x + col * cw, y + row * ch, cw, ch, black);
             }
         }
     }
 }
 
-static void draw_spark(int x, int y)
+static void draw_wireless_icon(int x, int y, bool selected)
 {
-    display_fill_rounded_rect(x, y, 2, 2, 0);
-    display_fill_rounded_rect(x - 5, y, 3, 1, 0);
-    display_fill_rounded_rect(x + 4, y, 3, 1, 0);
-    display_fill_rounded_rect(x, y - 5, 1, 3, 0);
-    display_fill_rounded_rect(x, y + 4, 1, 3, 0);
-    display_fill_rounded_rect(x - 4, y - 4, 2, 2, 0);
-    display_fill_rounded_rect(x + 4, y - 4, 2, 2, 0);
-    display_fill_rounded_rect(x - 4, y + 4, 2, 2, 0);
-    display_fill_rounded_rect(x + 4, y + 4, 2, 2, 0);
+    bool black = !selected;
+    for (int i = 0; i < 5; i++) {
+        display_draw_pixel(x + 8 + i, y + 17, black);
+    }
+    display_draw_pixel(x + 10, y + 14, black);
+    display_draw_pixel(x + 6, y + 12, black);
+    display_draw_pixel(x + 14, y + 12, black);
+    display_draw_pixel(x + 3, y + 10, black);
+    display_draw_pixel(x + 17, y + 10, black);
+    display_draw_pixel(x + 1, y + 8, black);
+    display_draw_pixel(x + 19, y + 8, black);
 }
 
-static void draw_pill(int x, int y, int w, const char *label, bool filled)
+static void draw_settings_icon(int x, int y, bool selected)
 {
-    int label_w = text_width_px(label);
-    int tx = x + (w - label_w) / 2;
-    if (tx < x + 2) tx = x + 2;
+    bool black = !selected;
+    for (int xx = x + 4; xx <= x + 16; xx++) {
+        display_draw_pixel(xx, y + 4, black);
+        display_draw_pixel(xx, y + 17, black);
+    }
+    for (int yy = y + 4; yy <= y + 17; yy++) {
+        display_draw_pixel(x + 4, yy, black);
+        display_draw_pixel(x + 16, yy, black);
+    }
+    for (int xx = x + 7; xx <= x + 13; xx++) {
+        display_draw_pixel(xx, y + 8, black);
+        display_draw_pixel(xx, y + 12, black);
+    }
+}
 
-    if (filled) {
-        display_fill_rounded_rect(x, y, w, 16, 3);
-        draw_text_clipped_style(tx, y + 2, label, (w - 4) / 9, TEXT_STYLE_INVERTED);
+static void draw_generic_icon(int x, int y, bool selected)
+{
+    bool black = !selected;
+    for (int yy = y + 5; yy <= y + 15; yy++) {
+        display_draw_pixel(x + 5, yy, black);
+        display_draw_pixel(x + 15, yy, black);
+    }
+    for (int xx = x + 5; xx <= x + 15; xx++) {
+        display_draw_pixel(xx, y + 5, black);
+        display_draw_pixel(xx, y + 15, black);
+    }
+}
+
+static void draw_icon_for_app(int app, int x, int y, bool selected)
+{
+    if (app == APP_ROW_USAGE) {
+        draw_clawd_icon(x, y + 4, 1, selected);
+    } else if (app == APP_ROW_SETTINGS) {
+        draw_settings_icon(x, y, selected);
+    } else if (app == APP_ROW_BT_PAGER) {
+        draw_generic_icon(x, y, selected);
+    } else if (app == APP_ROW_MBTI) {
+        draw_text_clipped_style(x, y + 5, "MB", 2, selected ? TEXT_STYLE_INVERTED : TEXT_STYLE_NORMAL);
     } else {
-        display_outline_rect(x, y, w, 16);
-        draw_text_clipped(tx, y + 2, label, (w - 4) / 9);
+        draw_generic_icon(x, y, selected);
     }
 }
 
-static void draw_footer_status(const char *text)
+static void draw_menu_row(int y, const char *label, const char *value,
+                          bool selected, int app_icon, bool wireless_icon)
 {
-    char buf[24];
-    strlcpy(buf, text && text[0] ? text : "Waiting for bridge", sizeof(buf));
-    int max_chars = 20;
-    if ((int)strlen(buf) > max_chars) {
-        buf[max_chars - 1] = '.';
-        buf[max_chars] = '\0';
+    int x = 16;
+    int w = 168;
+    int h = 26;
+    if (selected) {
+        display_fill_rounded_rect(x, y, w, h, 4);
+    } else {
+        display_outline_rect(x, y, w, h);
     }
 
-    int w = text_width_px(buf) + 16;
-    int x = (EPD_WIDTH - w) / 2;
-    if (x < 8) x = 8;
+    int tx = x + 12;
+    if (app_icon >= 0) {
+        draw_icon_for_app(app_icon, x + 8, y + 3, selected);
+        tx = x + 36;
+    } else if (wireless_icon) {
+        draw_wireless_icon(x + 8, y + 3, selected);
+        tx = x + 36;
+    }
 
-    display_outline_rect(8, 174, 184, 1);
-    draw_spark(x + 4, 187);
-    display_text_at(x + 14, 181, buf, TEXT_STYLE_NORMAL);
+    int style = selected ? TEXT_STYLE_INVERTED : TEXT_STYLE_NORMAL;
+    draw_text_clipped_style(tx, y + 7, label, 13, style);
+    if (value && value[0]) {
+        int vx = x + w - text_width_px(value) - 10;
+        if (vx < tx + 72) vx = tx + 72;
+        draw_text_clipped_style(vx, y + 7, value, 7, style);
+    }
 }
 
-static void draw_usage_block(int y, const char *label, int used_pct,
-                             int remaining_pct, const char *reset_text)
+static int window_start(int selected, int total)
 {
-    char detail_buf[40];
+    int start = selected - 1;
+    if (start < 0) start = 0;
+    if (start + 3 > total) start = total - 3;
+    if (start < 0) start = 0;
+    return start;
+}
 
-    if (remaining_pct >= 0 && reset_text && reset_text[0]) {
-        snprintf(detail_buf, sizeof(detail_buf), "%d%% left / %s",
-                 pct_for_bar(remaining_pct), reset_text);
+static const char *sleep_value(void)
+{
+    if (g_config.sleep_time_seconds <= 0) return "OFF";
+    if (g_config.sleep_time_seconds == 10) return "10s";
+    if (g_config.sleep_time_seconds == 30) return "30s";
+    if (g_config.sleep_time_seconds == 60) return "60s";
+    return "ON";
+}
+
+static const char *bt_template_value(void)
+{
+    switch (g_config.bt_template) {
+    case BT_MODE_YXT_PROTOCOL: return "YXT";
+    case BT_MODE_PPT_REMOTE: return "PPT";
+    case BT_MODE_PHONE_PAGER: return "PHONE";
+    case BT_MODE_CAMERA: return "CAM";
+    case BT_MODE_MEDIA: return "MEDIA";
+    case BT_MODE_READING: return "READ";
+    default: return "VIBE";
+    }
+}
+
+static void draw_progress(int x, int y, int w, int pct)
+{
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    display_outline_rect(x, y, w, 9);
+    int fill = (w - 2) * pct / 100;
+    if (fill > 0) {
+        display_fill_rounded_rect(x + 1, y + 1, fill, 7, 0);
+    }
+}
+
+static void draw_mini_battery_unknown(int x, int y)
+{
+    display_outline_rect(x, y, 22, 10);
+    pixel_block(x + 22, y + 3, 2, 4, true);
+    for (int i = 0; i < 4; i++) {
+        display_outline_rect(x + 3 + i * 4, y + 3, 2, 4);
+    }
+}
+
+static void draw_spark_icon(int x, int y)
+{
+    display_draw_pixel(x, y, true);
+    display_draw_pixel(x - 4, y, true);
+    display_draw_pixel(x + 4, y, true);
+    display_draw_pixel(x, y - 4, true);
+    display_draw_pixel(x, y + 4, true);
+    display_draw_pixel(x - 3, y - 3, true);
+    display_draw_pixel(x + 3, y - 3, true);
+    display_draw_pixel(x - 3, y + 3, true);
+    display_draw_pixel(x + 3, y + 3, true);
+}
+
+static int pct_for_bar(int pct);
+
+static const char *usage_pct_text(int pct, char *buf, size_t len)
+{
+    if (pct < 0) {
+        strlcpy(buf, "--%", len);
+    } else {
+        snprintf(buf, len, "%d%%", pct_for_bar(pct));
+    }
+    return buf;
+}
+
+static int pct_for_bar(int pct)
+{
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+}
+
+static void draw_usage_badge(int x, int y, const char *label)
+{
+    int w = 66;
+    display_outline_rect(x, y, w, 16);
+    draw_text_clipped(x + 6, y + 3, label, 7);
+}
+
+static void draw_usage_section(int y, const char *label, int used_pct, int remaining_pct,
+                               const char *resets_in)
+{
+    char pct[8];
+    usage_pct_text(used_pct, pct, sizeof(pct));
+    draw_text_clipped(12, y, pct, 4);
+    draw_usage_badge(122, y - 1, label);
+    draw_progress(12, y + 20, 176, pct_for_bar(used_pct));
+
+    char detail[28];
+    if (remaining_pct >= 0 && resets_in && resets_in[0]) {
+        snprintf(detail, sizeof(detail), "%d%% left / %s",
+                 pct_for_bar(remaining_pct), resets_in);
     } else if (remaining_pct >= 0) {
-        snprintf(detail_buf, sizeof(detail_buf), "%d%% left", pct_for_bar(remaining_pct));
+        snprintf(detail, sizeof(detail), "%d%% left / --", pct_for_bar(remaining_pct));
+    } else if (resets_in && resets_in[0]) {
+        snprintf(detail, sizeof(detail), "Resets in %s", resets_in);
     } else {
-        snprintf(detail_buf, sizeof(detail_buf), "resets in %s",
-                 reset_text && reset_text[0] ? reset_text : "--");
+        strlcpy(detail, "Resets in --", sizeof(detail));
+    }
+    draw_text_clipped(12, y + 34, detail, 20);
+}
+
+static void draw_usage_footer_text(const claude_usage_state_t *usage)
+{
+    char footer[28];
+    if (usage->error[0]) {
+        strlcpy(footer, usage->error, sizeof(footer));
+    } else if (!usage->has_data) {
+        strlcpy(footer, "Open bridge :8788", sizeof(footer));
+    } else if (usage->stale) {
+        strlcpy(footer, "Stale data", sizeof(footer));
+    } else if (usage->is_demo) {
+        strlcpy(footer, "Demo data", sizeof(footer));
+    } else if (usage->status[0]) {
+        strlcpy(footer, usage->status, sizeof(footer));
+    } else {
+        strlcpy(footer, "Live data", sizeof(footer));
     }
 
-    draw_big_pct(12, y, used_pct);
-    draw_pill(116, y + 3, 72, label, false);
-    draw_usage_bar(12, y + 34, 176, 8, used_pct);
-    draw_text_clipped(12, y + 48, detail_buf, 19);
-    display_outline_rect(12, y + 62, 176, 1);
+    display_outline_rect(10, 172, 180, 1);
+    int tw = text_width_px(footer);
+    int x = (EPD_WIDTH - tw - 14) / 2;
+    if (x < 10) x = 10;
+    draw_spark_icon(x + 4, 184);
+    draw_text_clipped(x + 14, 178, footer, 20);
+}
+
+static void cycle_sleep_time(void)
+{
+    if (g_config.sleep_time_seconds <= 0) g_config.sleep_time_seconds = 10;
+    else if (g_config.sleep_time_seconds == 10) g_config.sleep_time_seconds = 30;
+    else if (g_config.sleep_time_seconds == 30) g_config.sleep_time_seconds = 60;
+    else g_config.sleep_time_seconds = 0;
+}
+
+static void enter_app(app_row_t row)
+{
+    if (row >= 0 && row < APP_ROW_COUNT) {
+        set_current_mode(APP_MODES[row]);
+        if (row == APP_ROW_SETTINGS) {
+            s_settings_page = SETTINGS_ROOT;
+        }
+        ui_request_redraw();
+    }
+}
+
+bool ui_handle_key_event(key_event_t ev)
+{
+    if (ev.type != 1 || ev.event == 0) return false;
+
+    app_mode_t mode = current_mode();
+    bool short_up = ev.event == KEY_EVENT_PREV && !ev.is_long;
+    bool short_down = ev.event == KEY_EVENT_NEXT && !ev.is_long;
+    bool ok = ev.event == KEY_EVENT_CONFIRM && ev.is_long;
+    bool back = ev.event == KEY_EVENT_BACK && ev.is_long;
+
+    if (mode == APP_MODE_CLOCK) {
+        if (ok || short_down) {
+            set_current_mode(APP_MODE_APP_MENU);
+            ui_request_redraw();
+            return true;
+        }
+        if (back) {
+            set_current_mode(APP_MODE_SAFE_STATUS);
+            ui_request_redraw();
+            return true;
+        }
+        return true;
+    }
+
+    if (mode == APP_MODE_APP_MENU) {
+        if (short_up) {
+            s_app_selected = (s_app_selected + APP_ROW_COUNT - 1) % APP_ROW_COUNT;
+            ui_request_redraw();
+            return true;
+        }
+        if (short_down) {
+            s_app_selected = (s_app_selected + 1) % APP_ROW_COUNT;
+            ui_request_redraw();
+            return true;
+        }
+        if (ok) {
+            enter_app((app_row_t)s_app_selected);
+            return true;
+        }
+        if (back) {
+            set_current_mode(APP_MODE_CLOCK);
+            ui_request_redraw();
+            return true;
+        }
+        return true;
+    }
+
+    if (back) {
+        if (mode == APP_MODE_SETUP && s_settings_page == SETTINGS_WIRELESS_DETAIL) {
+            s_settings_page = SETTINGS_ROOT;
+            ui_request_redraw();
+        } else if (mode == APP_MODE_WIRELESS) {
+            set_current_mode(APP_MODE_SETUP);
+            s_settings_page = SETTINGS_ROOT;
+            ui_request_redraw();
+        } else {
+            set_current_mode(APP_MODE_APP_MENU);
+            ui_request_redraw();
+        }
+        return true;
+    }
+
+    switch (mode) {
+    case APP_MODE_ANSWERS:
+        if (ok || short_down) {
+            s_answers_visible = !s_answers_visible;
+            if (s_answers_visible) {
+                s_answers_index = (s_answers_index + 3) % (int)(sizeof(ANSWERS) / sizeof(ANSWERS[0]));
+            }
+            ui_request_redraw();
+            return true;
+        }
+        if (short_up) {
+            s_answers_visible = false;
+            ui_request_redraw();
+            return true;
+        }
+        break;
+
+    case APP_MODE_FORTUNE:
+        if (ok || short_down) {
+            s_fortune_visible = true;
+            s_fortune_index = (s_fortune_index + 5) % (int)(sizeof(FORTUNES) / sizeof(FORTUNES[0]));
+            ui_request_redraw();
+            return true;
+        }
+        if (short_up) {
+            s_fortune_visible = false;
+            ui_request_redraw();
+            return true;
+        }
+        break;
+
+    case APP_MODE_MERIT:
+        if (ok || short_down) {
+            g_config.merit_count++;
+            nvs_save_config(&g_config);
+            ui_request_redraw();
+            return true;
+        }
+        break;
+
+    case APP_MODE_BT_PAGER:
+        if (ok || short_down) {
+            g_config.bt_template = (g_config.bt_template + 1) % 7;
+            nvs_save_config(&g_config);
+            ble_pager_update_advertisement(g_config.bt_template);
+            ui_request_redraw();
+            return true;
+        }
+        break;
+
+    case APP_MODE_MBTI_GUIDE:
+        if (!s_mbti_detail) {
+            if (short_up) s_mbti_index = (s_mbti_index + 15) % 16;
+            else if (short_down) s_mbti_index = (s_mbti_index + 1) % 16;
+            else if (ok) s_mbti_detail = true;
+            else break;
+        } else if (ok || short_up || short_down) {
+            s_mbti_detail = false;
+        } else {
+            break;
+        }
+        ui_request_redraw();
+        return true;
+
+    case APP_MODE_SETUP:
+        if (short_up) {
+            s_settings_selected = (s_settings_selected + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
+        } else if (short_down) {
+            s_settings_selected = (s_settings_selected + 1) % SETTINGS_COUNT;
+        } else if (ok) {
+            if (s_settings_selected == SETTINGS_LANGUAGE) {
+                g_config.language = 1;
+                nvs_save_config(&g_config);
+            } else if (s_settings_selected == SETTINGS_SLEEP) {
+                cycle_sleep_time();
+                nvs_save_config(&g_config);
+            } else if (s_settings_selected == SETTINGS_KEY_SOUND) {
+                g_config.key_sound = !g_config.key_sound;
+                nvs_save_config(&g_config);
+            } else if (s_settings_selected == SETTINGS_GUIDE) {
+                g_config.mbti_knowledge_hidden = !g_config.mbti_knowledge_hidden;
+                nvs_save_config(&g_config);
+            } else if (s_settings_selected == SETTINGS_WIRELESS) {
+                set_current_mode(APP_MODE_WIRELESS);
+            } else if (s_settings_selected == SETTINGS_UPDATE) {
+                set_current_mode(APP_MODE_WIRELESS);
+                s_wireless_selected = WIRELESS_OTA;
+            }
+        } else {
+            break;
+        }
+        ui_request_redraw();
+        return true;
+
+    case APP_MODE_WIRELESS:
+        if (short_up) {
+            s_wireless_selected = (s_wireless_selected + WIRELESS_COUNT - 1) % WIRELESS_COUNT;
+        } else if (short_down) {
+            s_wireless_selected = (s_wireless_selected + 1) % WIRELESS_COUNT;
+        } else if (ok) {
+            if (s_wireless_selected == WIRELESS_BLE) {
+                ble_usage_init();
+            } else {
+                s_settings_page = SETTINGS_WIRELESS_DETAIL;
+            }
+        } else {
+            break;
+        }
+        ui_request_redraw();
+        return true;
+
+    case APP_MODE_CLAUDE_USAGE:
+        if (ok) {
+            ui_request_redraw();
+            return true;
+        }
+        break;
+
+    default:
+        break;
+    }
+    return false;
+}
+
+void ui_draw_clock_screen(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("CLOCK");
+    draw_centered(68, "2026-05-20", TEXT_STYLE_NORMAL);
+    draw_centered(98, "12:34", TEXT_STYLE_TITLE);
+    draw_centered(144, "ADV 2.4G  |  API ON", TEXT_STYLE_NORMAL);
+    draw_footer("Hold OK Cfg");
+    ui_flush_display();
+}
+
+static void draw_app_menu(void)
+{
+    display_begin_frame();
+    draw_header("APPLICATIONS");
+    int start = window_start(s_app_selected, APP_ROW_COUNT);
+    for (int slot = 0; slot < 3; slot++) {
+        int idx = start + slot;
+        const char *value = "";
+        if (idx == APP_ROW_USAGE) value = "LIVE";
+        else if (idx == APP_ROW_MERIT) value = "108";
+        else if (idx == APP_ROW_BT_PAGER) value = "OFF";
+        draw_menu_row(54 + slot * 33, APP_LABELS[idx], value, idx == s_app_selected, idx, false);
+    }
+    draw_footer("Press=Switch / Hold=OK");
+    ui_flush_display();
+}
+
+void ui_draw_setup_menu(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("SETTINGS");
+    int start = window_start(s_settings_selected, SETTINGS_COUNT);
+    for (int slot = 0; slot < 3; slot++) {
+        int idx = start + slot;
+        const char *value = "";
+        if (idx == SETTINGS_LANGUAGE) value = "EN";
+        else if (idx == SETTINGS_SLEEP) value = sleep_value();
+        else if (idx == SETTINGS_KEY_SOUND) value = g_config.key_sound ? "ON" : "OFF";
+        else if (idx == SETTINGS_GUIDE) value = g_config.mbti_knowledge_hidden ? "HIDE" : "SHOW";
+        else if (idx == SETTINGS_WIRELESS) value = "ADV";
+        else if (idx == SETTINGS_UPDATE) value = "OK";
+        else if (idx == SETTINGS_ABOUT) value = "1.2.6+";
+        draw_menu_row(54 + slot * 33, SETTINGS_LABELS[idx], value,
+                      idx == s_settings_selected, -1, idx == SETTINGS_WIRELESS);
+    }
+    draw_footer("Press=Switch / Hold=OK");
+    ui_flush_display();
+}
+
+static void draw_wireless_detail(void)
+{
+    wifi_runtime_status_t wifi;
+    wifi_get_runtime_status(&wifi);
+    ble_usage_status_t ble;
+    ble_usage_get_status(&ble);
+
+    display_begin_frame();
+    if (s_wireless_selected == WIRELESS_WIFI) {
+        draw_header("WI-FI");
+        draw_centered(55, "SSID", TEXT_STYLE_NORMAL);
+        draw_centered(74, wifi.sta_connected ? "ADV 2.4G" : "Band-0 Setup", TEXT_STYLE_NORMAL);
+        draw_centered(104, "IP", TEXT_STYLE_NORMAL);
+        draw_centered(123, wifi.ip[0] ? wifi.ip : "192.168.50.1", TEXT_STYLE_NORMAL);
+    } else if (s_wireless_selected == WIRELESS_LOCAL_API) {
+        draw_header("LOCAL API");
+        draw_centered(58, "Status", TEXT_STYLE_NORMAL);
+        draw_centered(77, "ON", TEXT_STYLE_TITLE);
+        char heap[24];
+        snprintf(heap, sizeof(heap), "Heap %luK", (unsigned long)(esp_get_free_heap_size() / 1024));
+        draw_centered(119, heap, TEXT_STYLE_NORMAL);
+    } else if (s_wireless_selected == WIRELESS_OTA) {
+        draw_header("UPDATE");
+        draw_centered(56, "Source", TEXT_STYLE_NORMAL);
+        draw_centered(75, "Local ADV", TEXT_STYLE_NORMAL);
+        draw_centered(108, "Last", TEXT_STYLE_NORMAL);
+        draw_centered(127, "See /api/status", TEXT_STYLE_NORMAL);
+    } else if (s_wireless_selected == WIRELESS_LOGS) {
+        draw_header("LOGS");
+        draw_centered(64, "Recent", TEXT_STYLE_NORMAL);
+        draw_centered(84, "GET /api/logs", TEXT_STYLE_NORMAL);
+        draw_centered(124, "OK", TEXT_STYLE_TITLE);
+    } else {
+        draw_header("BLE");
+        draw_centered(56, "Status", TEXT_STYLE_NORMAL);
+        draw_centered(75, ble.ready ? "ON" : "OFF", TEXT_STYLE_TITLE);
+        draw_centered(116, ble.ready ? "Heap LOW" : "Hold OK Start", TEXT_STYLE_NORMAL);
+    }
+    draw_footer("Hold BACK to Wireless");
+    ui_flush_display();
+}
+
+static void draw_wireless_menu(void)
+{
+    if (s_settings_page == SETTINGS_WIRELESS_DETAIL) {
+        draw_wireless_detail();
+        return;
+    }
+
+    wifi_runtime_status_t wifi;
+    wifi_get_runtime_status(&wifi);
+    ble_usage_status_t ble;
+    ble_usage_get_status(&ble);
+
+    display_begin_frame();
+    draw_header("WIRELESS");
+    int start = window_start(s_wireless_selected, WIRELESS_COUNT);
+    for (int slot = 0; slot < 3; slot++) {
+        int idx = start + slot;
+        const char *value = "";
+        if (idx == WIRELESS_WIFI) value = wifi.sta_connected ? "ADV" : "SETUP";
+        else if (idx == WIRELESS_LOCAL_API) value = "ON";
+        else if (idx == WIRELESS_OTA) value = "READY";
+        else if (idx == WIRELESS_LOGS) value = "OK";
+        else if (idx == WIRELESS_BLE) value = ble.ready ? "ON" : "OFF";
+        draw_menu_row(54 + slot * 33, WIRELESS_LABELS[idx], value,
+                      idx == s_wireless_selected, -1, idx == WIRELESS_WIFI);
+    }
+    draw_footer("Hold BACK to Settings");
+    ui_flush_display();
+}
+
+void ui_draw_answer_or_fortune(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("ANSWERS");
+    if (!s_answers_visible) {
+        draw_centered(66, "Ask a question", TEXT_STYLE_NORMAL);
+        draw_centered(90, "then press DOWN", TEXT_STYLE_NORMAL);
+        display_fill_rounded_rect(42, 116, 116, 22, 4);
+        draw_centered(121, "PRESS DOWN", TEXT_STYLE_INVERTED);
+    } else {
+        display_outline_rect(14, 58, 172, 78);
+        draw_centered(68, "ANSWER", TEXT_STYLE_NORMAL);
+        draw_centered(96, ANSWERS[s_answers_index], TEXT_STYLE_NORMAL);
+        draw_centered(145, "Press UP reset", TEXT_STYLE_NORMAL);
+    }
+    draw_footer("Long BACK to exit");
+    ui_flush_display();
+}
+
+void ui_draw_fortune(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("FORTUNE");
+    if (!s_fortune_visible) {
+        draw_centered(76, "Draw daily advice", TEXT_STYLE_NORMAL);
+        display_fill_rounded_rect(42, 112, 116, 22, 4);
+        draw_centered(117, "PRESS DOWN", TEXT_STYLE_INVERTED);
+    } else {
+        display_outline_rect(14, 58, 172, 90);
+        draw_centered(68, "TODAY", TEXT_STYLE_NORMAL);
+        draw_centered(96, FORTUNES[s_fortune_index], TEXT_STYLE_NORMAL);
+    }
+    draw_footer("Long BACK to exit");
+    ui_flush_display();
+}
+
+void ui_draw_merit_counter(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("MERIT");
+    draw_centered(62, "COUNT", TEXT_STYLE_NORMAL);
+    display_outline_rect(42, 84, 116, 36);
+    char count[16];
+    snprintf(count, sizeof(count), "%d", g_config.merit_count);
+    draw_centered(96, count, TEXT_STYLE_TITLE);
+    draw_centered(140, "Press DOWN +1", TEXT_STYLE_NORMAL);
+    draw_footer("Long BACK to exit");
+    ui_flush_display();
+}
+
+void ui_draw_mbti_guide(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("MBTI GUIDE");
+    if (!s_mbti_detail) {
+        draw_centered(54, "Select Type", TEXT_STYLE_NORMAL);
+        display_fill_rounded_rect(48, 78, 104, 36, 6);
+        draw_centered(88, MBTI_TYPES[s_mbti_index], TEXT_STYLE_INVERTED);
+        draw_centered(134, "UP/DN Switch", TEXT_STYLE_NORMAL);
+    } else {
+        char title[24];
+        snprintf(title, sizeof(title), "TYPE %s", MBTI_TYPES[s_mbti_index]);
+        draw_centered(58, title, TEXT_STYLE_NORMAL);
+        draw_centered(88, "Guide one choice.", TEXT_STYLE_NORMAL);
+        draw_centered(111, "Avoid overwork.", TEXT_STYLE_NORMAL);
+        draw_centered(145, "OK Back", TEXT_STYLE_NORMAL);
+    }
+    draw_footer("Long BACK to exit");
+    ui_flush_display();
+}
+
+void ui_draw_bt_pager(bool english)
+{
+    (void)english;
+    display_begin_frame();
+    draw_header("BT PAGER");
+    draw_centered(56, "Rand/0 Pager", TEXT_STYLE_NORMAL);
+    display_fill_rounded_rect(38, 82, 124, 22, 4);
+    draw_centered(87, bt_template_value(), TEXT_STYLE_INVERTED);
+    draw_centered(124, "Press=Switch", TEXT_STYLE_NORMAL);
+    draw_footer("Long BACK to exit");
+    ui_flush_display();
 }
 
 void ui_draw_claude_usage(bool english)
@@ -439,64 +868,29 @@ void ui_draw_claude_usage(bool english)
     claude_usage_get_state(&usage);
 
     display_begin_frame();
+    draw_clawd_icon(8, 7, 2, false);
+    draw_centered(11, "Usage", TEXT_STYLE_NORMAL);
+    draw_mini_battery_unknown(166, 8);
+    display_outline_rect(10, 34, 180, 1);
 
-    draw_clawd_logo(8, 6);
-    display_text_at(56, 10, "Usage", TEXT_STYLE_NORMAL);
-
-    const bool has_problem = usage.error[0] && strcmp(usage.error, "Open bridge :8788");
-    const char *badge = "WAIT";
-    bool filled_badge = false;
-    if (has_problem) {
-        badge = "ERROR";
-        filled_badge = true;
-    } else if (usage.stale) {
-        badge = "STALE";
-    } else if (usage.is_demo) {
-        badge = "DEMO";
-    } else if (usage.has_data) {
-        badge = "LIVE";
-        filled_badge = true;
-    }
-    draw_pill(138, 8, 54, badge, filled_badge);
-    display_outline_rect(8, 31, 184, 1);
-
-    if (!usage.has_data) {
-        display_text_at(22, 58, has_problem ? "Needs attention" : "Ready to sync", TEXT_STYLE_NORMAL);
-        display_outline_rect(22, 82, 156, 1);
-        display_text_at(22, 96, "ADV USB + Wi-Fi", TEXT_STYLE_NORMAL);
-        display_text_at(22, 116, "localhost:8788", TEXT_STYLE_NORMAL);
-        draw_text_clipped(22, 136, usage.error[0] ? usage.error : "Open web app", 17);
-        draw_footer_status("Short key switches app");
-        ui_flush_display();
-        return;
-    }
-
-    draw_usage_block(41, "Current", usage.current_used, usage.current_remaining,
-                     usage.current_resets_in);
-    draw_usage_block(104, "Weekly", usage.weekly_used, usage.weekly_remaining,
-                     usage.weekly_resets_in);
-
-    char meta[64];
-    if (has_problem) {
-        snprintf(meta, sizeof(meta), "%s", usage.error);
-    } else if (usage.stale) {
-        snprintf(meta, sizeof(meta), "Cached  %s", usage.source[0] ? usage.source : usage.status);
-    } else if (usage.is_demo) {
-        snprintf(meta, sizeof(meta), "Demo  %s", usage.model[0] ? usage.model : usage.status);
+    if (!usage.has_data && usage.error[0]) {
+        draw_centered(58, "Usage Error", TEXT_STYLE_NORMAL);
+        draw_text_clipped(18, 88, usage.error, 18);
+        draw_text_clipped(18, 116, "Check bridge", 18);
+    } else if (!usage.has_data) {
+        draw_centered(56, "Ready to sync", TEXT_STYLE_NORMAL);
+        draw_centered(82, "ADV Wi-Fi bridge", TEXT_STYLE_NORMAL);
+        draw_centered(108, "Open localhost:8788", TEXT_STYLE_NORMAL);
+        display_fill_rounded_rect(44, 134, 112, 22, 4);
+        draw_centered(139, "SYNC NOW", TEXT_STYLE_INVERTED);
     } else {
-        snprintf(meta, sizeof(meta), "%s via %s",
-                 usage.model[0] ? usage.model : "live",
-                 usage.source[0] ? usage.source : usage.last_transport);
+        draw_usage_section(46, "Current", usage.current_used, usage.current_remaining,
+                           usage.current_resets_in);
+        draw_usage_section(104, "Weekly", usage.weekly_used, usage.weekly_remaining,
+                           usage.weekly_resets_in);
     }
 
-    if (usage.age_seconds >= 0 && !has_problem && usage.stale) {
-        char aged[24];
-        int age = usage.age_seconds > 9999 ? 9999 : usage.age_seconds;
-        snprintf(aged, sizeof(aged), "Cached age %ds", age);
-        draw_footer_status(aged);
-    } else {
-        draw_footer_status(meta);
-    }
+    draw_usage_footer_text(&usage);
     ui_flush_display();
 }
 
@@ -507,54 +901,37 @@ void ui_draw_safe_status(bool english)
     claude_usage_get_state(&usage);
 
     display_begin_frame();
-    display_text_at(16, 10, "BAND-0 SAFE", TEXT_STYLE_NORMAL);
-    display_outline_rect(8, 28, 184, 1);
-
-    char line[40];
-    display_text_at(12, 42, "fw", TEXT_STYLE_NORMAL);
-    draw_text_clipped(42, 42, BAND0_FIRMWARE_VERSION, 17);
+    draw_header("SAFE");
+    draw_text_clipped(12, 50, BAND0_FIRMWARE_VERSION, 19);
+    char line[32];
     snprintf(line, sizeof(line), "mode %d heap %luK", current_mode(),
              (unsigned long)(esp_get_free_heap_size() / 1024));
-    display_text_at(12, 62, line, TEXT_STYLE_NORMAL);
+    draw_text_clipped(12, 72, line, 20);
     snprintf(line, sizeof(line), "usage %s", usage.has_data ? usage.status : "waiting");
-    display_text_at(12, 82, line, TEXT_STYLE_NORMAL);
-    snprintf(line, sizeof(line), "src %s", usage.last_transport[0] ? usage.last_transport : "-");
-    display_text_at(12, 102, line, TEXT_STYLE_NORMAL);
-
-    display_outline_rect(8, 126, 184, 1);
-    display_text_at(12, 140, "UP hold: Usage", TEXT_STYLE_NORMAL);
-    display_text_at(12, 158, "DN hold: Redraw", TEXT_STYLE_NORMAL);
-    display_text_at(12, 176, "BOTH 10s: reboot", TEXT_STYLE_NORMAL);
+    draw_text_clipped(12, 94, line, 20);
+    draw_text_clipped(12, 122, "Both 10s: reboot", 20);
+    draw_footer("Long BACK Clock");
     ui_flush_display();
 }
 
-/* ── Screen: Pending Request Overlay ─────────────────────────── */
 void ui_draw_pending_request(const pending_request_t *req)
 {
     if (!req) return;
-
     display_begin_frame();
-
-    int y = 40;
-    display_text(y, "OTA Request", TEXT_STYLE_TITLE);
-    y += 30;
-    display_text(y, req->message, TEXT_STYLE_NORMAL);
-
-    display_text(170, "Hold DOWN to confirm", TEXT_STYLE_NORMAL);
+    draw_header("OTA");
+    draw_centered(70, "Request", TEXT_STYLE_NORMAL);
+    draw_text_clipped(18, 98, req->message, 18);
+    draw_footer("Hold OK confirm");
     ui_flush_display();
 }
 
-/* ── Main Render Entry ───────────────────────────────────────── */
 void ui_render_current_screen(void)
 {
     if (!display_is_ready()) return;
     if (!s_redraw_requested) return;
 
     bool eng = language_is_english();
-
-    /* Draw custom wallpaper first (if present) */
-    bool has_wallpaper = wallpaper_draw_if_present();
-    (void)has_wallpaper;
+    (void)wallpaper_draw_if_present();
 
     switch (current_mode()) {
     case APP_MODE_ANSWERS:
@@ -575,11 +952,17 @@ void ui_render_current_screen(void)
     case APP_MODE_MBTI_GUIDE:
         ui_draw_mbti_guide(eng);
         break;
+    case APP_MODE_APP_MENU:
+        draw_app_menu();
+        break;
     case APP_MODE_CLAUDE_USAGE:
         ui_draw_claude_usage(eng);
         break;
     case APP_MODE_SETUP:
         ui_draw_setup_menu(eng);
+        break;
+    case APP_MODE_WIRELESS:
+        draw_wireless_menu();
         break;
     case APP_MODE_SAFE_STATUS:
         ui_draw_safe_status(eng);

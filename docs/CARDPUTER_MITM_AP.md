@@ -120,8 +120,9 @@ cd /Users/yuookie/Documents/dev/Band-0
 2026-05-20 更新：
 
 - Band-0 当前稳定固件为 `1.2.5-rebuilt-baseline10`。
-- ADV 当前暂存 `/band0.bin`：大小 `889952` 字节，SHA256 `1f1d9e5c5614aa6e277f724c4d2c783ac9a4dafd461f0a312b6a3509bfc01ca2`。
-- 已完成多次真实 ADV 网络 OTA：当前 `fw_download_count=4`、`fw_last_served_size=889952`，Band-0 回到 `baseline10`，`/api/status` 显示 `health=ok`、`ota.success=true`、`result_for=12`。
+- 本地下一版 `1.2.6-local-ui1` 已构建并上传到 ADV 暂存：`/band0.bin` 大小 `892656` 字节，SHA256 `aa57d802d3aa798891a7c080841214768ca3929abce2228126eed4b1890dc18c`。
+- 当前尚未触发 `1.2.6-local-ui1` 的 Band-0 OTA；ADV 状态显示 `stations=0`，需要 Band-0 连回 `ADV 2.4G` 后再执行一次直接 OTA。
+- 已完成多次真实 ADV 网络 OTA：上一轮 `baseline10` OTA 验证中，ADV 服务完整固件，Band-0 回到 `baseline10`，`/api/status` 显示 `health=ok`、`ota.success=true`、`result_for=12`。
 - updater 曾因 main task 栈只有 3072 字节在 EPD 刷新时 `Stack protection fault`，现已把 updater 主任务栈提升到 8192 字节并通过 OTA 验证。
 - `baseline10` 默认关闭 BLE 自动启动和蜂鸣器：这保留约 38 KB heap 给 HTTP/OTA；需要 BLE 时使用 `POST /api/ble/start` 手动启动。
 
@@ -133,13 +134,13 @@ cd /Users/yuookie/Documents/dev/Band-0
 - Band-0 自定义主固件还内置恢复/调试 API：`GET /api/ota/status`、`POST /api/mode`、`POST /api/reboot`。
 - 自定义主固件不会自动查官方云并直接 OTA；更新必须由本地 API 显式写入 URL，再交给 updater。
 - 2026-05-19 实机 UART 验证：自定义主固件可正常启动到 `All subsystems initialized`，按键、HTTP server、EPD init 均启动，无 `Guru Meditation` 重启。
-- 当前源代码最新构建：`sdk/build/Quote_0_ESP8684_IDF.bin`，版本 `1.2.5-rebuilt-baseline1`，大小 `1050192` 字节，SHA256 `af10121f6fc55e2f22ef2fd45370c7ac167140d795a287ce2cc9ed00b63cbafc`。
+- 当前源代码最新构建：`sdk/build/Quote_0_ESP8684_IDF.bin`，版本 `1.2.6-local-ui1`，大小 `892656` 字节，SHA256 `aa57d802d3aa798891a7c080841214768ca3929abce2228126eed4b1890dc18c`。
 - 2026-05-19 实机 UART 验证：`usage3` 已刷入 Band-0 `main` 分区并正常启动，启动日志见 `logs/band0_usage3_boot.log`。
 - `usage3` 修复项：Wi-Fi STA 初始化 race、主循环误清 OTA URL、断电后掉回 MBTI/空框、5 分钟休眠清屏、重启后用量数据丢失、首帧电子纸残影概率。
 - `usage3` 断电重启验证：设备默认进入 `APP_MODE_CLAUDE_USAGE`，从 NVS 恢复上次 Claude 用量 payload，HTTP 状态显示 `transport=cache`、`stale=true`，随后桥接器同步后恢复 `transport=wifi`、`stale=false`。日志见 `logs/band0_usage3_reboot_cache.log`。
 - 2026-05-19 网络 OTA 演练：`usage3` 通过 ADV 成功触发同版本 OTA，ADV 记录 `fw_download_count=1`、`fw_last_served_size=825696`，Band-0 回到 `usage3` 主程序，证明 URL 不再被提前清掉。
 - `usage4` 修复项：为后续 OTA 增加 `armed_attempt` 标记，回到 main 后自动清理 OTA URL 和旧 `fail_reason`，避免状态页长期显示历史 `no_url`。
-- 当前 ADV 已重新刷入 bridge 固件，并已暂存 `baseline1` 到 `/band0.bin`：`firmware_size=1050192`，SHA256 `af10121f6fc55e2f22ef2fd45370c7ac167140d795a287ce2cc9ed00b63cbafc`。
+- 当前 ADV 已重新刷入 bridge 固件，并已暂存 `1.2.6-local-ui1` 到 `/band0.bin`：`firmware_size=892656`，SHA256 `aa57d802d3aa798891a7c080841214768ca3929abce2228126eed4b1890dc18c`。
 - 每次重编 Band-0 固件后，都要重新执行 `adv_bridge.py upload` 再做网络 OTA；不要假设 ADV `/fw.bin` 已经是最新构建。
 - 设备 fallback 调试热点为 `Band-0 Setup`，AP 地址 `192.168.50.1`。不要再用 `192.168.4.1` 访问 Band-0 自身；`192.168.4.1` 留给 Cardputer ADV MITM AP。
 
