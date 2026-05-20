@@ -429,8 +429,10 @@ static bool parse_mode_name(const char *name, app_mode_t *mode)
     else if (!strcmp(name, "ble") || !strcmp(name, "pager")) *mode = APP_MODE_BT_PAGER;
     else if (!strcmp(name, "clock")) *mode = APP_MODE_CLOCK;
     else if (!strcmp(name, "mbti")) *mode = APP_MODE_MBTI_GUIDE;
+    else if (!strcmp(name, "menu") || !strcmp(name, "apps")) *mode = APP_MODE_APP_MENU;
     else if (!strcmp(name, "usage") || !strcmp(name, "claude")) *mode = APP_MODE_CLAUDE_USAGE;
-    else if (!strcmp(name, "setup")) *mode = APP_MODE_SETUP;
+    else if (!strcmp(name, "setup") || !strcmp(name, "settings")) *mode = APP_MODE_SETUP;
+    else if (!strcmp(name, "wireless") || !strcmp(name, "wifi")) *mode = APP_MODE_WIRELESS;
     else if (!strcmp(name, "safe") || !strcmp(name, "status")) *mode = APP_MODE_SAFE_STATUS;
     else return false;
     return true;

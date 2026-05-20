@@ -65,6 +65,13 @@ void display_text(int y, const char *text, int style);
 void display_text_at(int x, int y, const char *text, int style);
 
 /**
+ * @brief Set or clear one framebuffer pixel.
+ *
+ * @param black true sets black, false clears to white.
+ */
+void display_draw_pixel(int x, int y, bool black);
+
+/**
  * @brief Fill a rounded rectangle.
  *
  * @param x, y, w, h  Bounding box.

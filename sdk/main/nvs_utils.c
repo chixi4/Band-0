@@ -39,7 +39,7 @@ static const char *TAG = "nvs_utils";
 
 /* ── Default Config ──────────────────────────────────────────── */
 static const app_config_t DEFAULT_CONFIG = {
-    .boot_mode          = APP_MODE_CLAUDE_USAGE,
+    .boot_mode          = APP_MODE_CLOCK,
     .language           = 0,
     .mbti_type          = 0,
     .sleep_time_seconds = 0,

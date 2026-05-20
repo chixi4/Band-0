@@ -96,6 +96,20 @@ void display_draw_bitmap(const uint8_t *data, int len)
 /* Simple 8x12 ASCII font (space through ~) */
 #include "font_8x12.h"
 
+void display_draw_pixel(int x, int y, bool black)
+{
+    if (x < 0 || x >= EPD_WIDTH || y < 0 || y >= EPD_HEIGHT) return;
+    int idx = y * (EPD_WIDTH / 4) + (x / 4);
+    int shift = 6 - 2 * (x % 4);
+    uint8_t mask = (uint8_t)(0x03 << shift);
+    if (black) {
+        s_fb[idx] |= mask;
+    } else {
+        s_fb[idx] &= (uint8_t)~mask;
+    }
+    s_redraw_pending = true;
+}
+
 static void draw_char(int x, int y, char c, bool invert)
 {
     if (c < 0x20 || c > 0x7E) c = 0x20;
@@ -104,16 +118,12 @@ static void draw_char(int x, int y, char c, bool invert)
         uint8_t bits = font_8x12_data[(uint8_t)c * 12 + row];
         for (int col = 0; col < 8; col++) {
             bool on = (bits >> (7 - col)) & 1;
-            if (invert) on = !on;
-            if (on) {
-                int px = x + col;
-                int py = y + row;
-                if (px >= 0 && px < EPD_WIDTH && py >= 0 && py < EPD_HEIGHT) {
-                    /* Set pixel to black (11) */
-                    int idx = py * (EPD_WIDTH / 4) + (px / 4);
-                    int shift = 6 - 2 * (px % 4);
-                    s_fb[idx] |= (0x03 << shift);
-                }
+            int px = x + col;
+            int py = y + row;
+            if (invert) {
+                display_draw_pixel(px, py, !on);
+            } else if (on) {
+                display_draw_pixel(px, py, true);
             }
         }
     }

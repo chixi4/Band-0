@@ -23,7 +23,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
-from adv_bridge import AdvBridge, BridgeError, DEFAULT_BAUD, parse_http_body
+from adv_bridge import (
+    AdvBridge,
+    BridgeError,
+    DEFAULT_BAUD,
+    candidate_ports,
+    parse_http_body,
+    probe_port,
+)
 
 
 DEFAULT_SOURCE = "http://127.0.0.1:8787"
@@ -104,6 +111,7 @@ class UsageWifiBridge:
             auto_enabled=args.auto,
             interval_seconds=args.interval,
         )
+        self._resolved_adv_port = ""
 
     def source_json(self, path: str, query: dict[str, Any] | None = None, timeout: float = 12) -> dict[str, Any]:
         url = self.args.source.rstrip("/") + path
@@ -124,11 +132,27 @@ class UsageWifiBridge:
 
     def adv_cmd(self, name: str, timeout: float = 12, **payload: Any) -> dict[str, Any]:
         with self.state.adv_lock:
-            bridge = AdvBridge(self.args.adv_port, baud=self.args.baud, verbose=self.args.verbose)
+            bridge = self.open_adv_bridge()
             try:
                 return bridge.cmd(name, timeout=timeout, **payload)
             finally:
                 bridge.close()
+
+    def open_adv_bridge(self) -> AdvBridge:
+        if self.args.adv_port != "auto":
+            return AdvBridge(self.args.adv_port, baud=self.args.baud, verbose=self.args.verbose)
+
+        if self._resolved_adv_port:
+            try:
+                return AdvBridge(self._resolved_adv_port, baud=self.args.baud, verbose=self.args.verbose)
+            except Exception:
+                self._resolved_adv_port = ""
+
+        for port in candidate_ports():
+            if probe_port(port, self.args.baud, verbose=False):
+                self._resolved_adv_port = port
+                return AdvBridge(port, baud=self.args.baud, verbose=self.args.verbose)
+        raise BridgeError("ADV bridge serial port not found")
 
     def adv_status(self) -> dict[str, Any]:
         return self.adv_cmd("status", timeout=5)
@@ -219,6 +243,7 @@ class UsageWifiBridge:
             "bridge": "band0-claude-usage-wifi",
             "source": self.args.source,
             "adv_port": self.args.adv_port,
+            "resolved_adv_port": self._resolved_adv_port,
             "state": state,
             "now": time.time(),
         }
@@ -226,11 +251,13 @@ class UsageWifiBridge:
             for name, getter in (
                 ("source_status", lambda: self.source_json("/api/status", timeout=6)),
                 ("adv_status", self.adv_status),
+                ("band_status", lambda: self.band_get("/api/status", timeout=8)),
             ):
                 try:
                     result[name] = getter()
                 except Exception as exc:
                     result[name] = {"ok": False, "error": str(exc)}
+            result["resolved_adv_port"] = self._resolved_adv_port
         return result
 
     def auto_loop(self) -> None:
@@ -277,6 +304,10 @@ def make_handler(service: UsageWifiBridge) -> type[BaseHTTPRequestHandler]:
                     json_response(self, HTTPStatus.OK, data)
                 elif parsed.path == "/api/band/status":
                     json_response(self, HTTPStatus.OK, service.band_get("/api/status"))
+                elif parsed.path == "/api/band/usage":
+                    json_response(self, HTTPStatus.OK, service.band_get("/api/usage"))
+                elif parsed.path == "/api/band/logs":
+                    json_response(self, HTTPStatus.OK, service.band_get("/api/logs"))
                 else:
                     json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
             except Exception as exc:
@@ -331,18 +362,17 @@ DASHBOARD_HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Band-0 Claude Usage Bridge</title>
 <style>
-:root{color-scheme:light dark;--bg:#f6f7f8;--panel:#fff;--text:#111;--muted:#68707a;--line:#d9dee5;--ink:#111;--soft:#eef1f4;--ok:#0f7b4d;--warn:#a25c00;--bad:#b42318}
-@media(prefers-color-scheme:dark){:root{--bg:#101214;--panel:#171a1d;--text:#f4f5f6;--muted:#a6adb5;--line:#30363d;--ink:#f4f5f6;--soft:#20252a}}
+:root{color-scheme:light;--bg:#f7f8fa;--panel:#fff;--text:#15171a;--muted:#68707a;--line:#d9dee5;--ink:#15171a;--soft:#f0f3f6;--ok:#0f7b4d;--warn:#a25c00;--bad:#b42318}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 main{max-width:1080px;margin:0 auto;padding:24px;display:grid;gap:16px;grid-template-columns:minmax(300px,360px) 1fr}
 header{grid-column:1/-1;display:flex;align-items:end;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:14px}
 h1{font-size:22px;margin:0;letter-spacing:0}.sub{color:var(--muted);margin-top:4px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
 .stack{display:grid;gap:16px}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:6px;padding:8px 10px;font:inherit;cursor:pointer}button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}button:disabled{opacity:.55;cursor:not-allowed}
+button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:6px;padding:8px 10px;font:inherit;cursor:pointer}button.primary{background:var(--ink);color:white;border-color:var(--ink)}button:disabled{opacity:.55;cursor:not-allowed}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}.status{display:grid;gap:8px}.status div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:7px}.status div:last-child{border-bottom:0;padding-bottom:0}
 .badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:12px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-.device{width:min(100%,320px);aspect-ratio:1;margin:auto;border:10px solid var(--ink);border-radius:10px;background:#fff;color:#111;padding:14px;display:grid;grid-template-rows:auto 1fr auto;gap:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.device-head{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:8px}.logo{font-weight:800}.screen-badge{border:1px solid #111;padding:2px 6px;font-size:12px}
+.device{width:min(100%,320px);aspect-ratio:1;margin:auto;border:1px solid #111;border-radius:8px;background:#fff;color:#111;padding:14px;display:grid;grid-template-rows:auto 1fr auto;gap:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;box-shadow:0 10px 24px rgba(20,25,30,.08)}
+.device-head{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:8px}.logo{display:flex;align-items:center;gap:8px;font-weight:800}.clawd{display:inline-grid;grid-template-columns:repeat(18,1px);grid-auto-rows:2px;gap:0;transform:scale(2);transform-origin:left center;margin-right:18px}.clawd i{width:1px;height:2px;background:#111}.screen-badge{border:1px solid #111;padding:2px 6px;font-size:12px}
 .quota{display:grid;gap:14px;align-content:center}.quota-block{border:1px solid #111;padding:10px}.quota-top{display:flex;justify-content:space-between;align-items:center}.pct{font-size:22px;font-weight:800}.pill{border:1px solid #111;padding:2px 7px;font-size:12px}.bar{height:10px;border:1px solid #111;margin-top:8px}.fill{height:100%;background:#111;width:0}.detail{font-size:12px;margin-top:6px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.foot{border-top:2px solid #111;padding-top:8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 pre{max-height:260px;overflow:auto;background:var(--soft);border-radius:6px;padding:12px;font-size:12px}
 @media(max-width:760px){main{grid-template-columns:1fr;padding:16px}header{align-items:start;flex-direction:column}.device{width:min(100%,300px)}}
@@ -363,7 +393,7 @@ pre{max-height:260px;overflow:auto;background:var(--soft);border-radius:6px;padd
   </header>
   <section class="panel stack">
     <div class="device">
-      <div class="device-head"><span class="logo">Claude</span><span class="screen-badge" id="badge">WAIT</span></div>
+      <div class="device-head"><span class="logo"><span class="clawd" id="clawd"></span>Usage</span><span class="screen-badge" id="badge">WAIT</span></div>
       <div class="quota">
         <div class="quota-block">
           <div class="quota-top"><span class="pct" id="cu">--%</span><span class="pill">Now</span></div>
@@ -382,7 +412,11 @@ pre{max-height:260px;overflow:auto;background:var(--soft);border-radius:6px;padd
       <button id="auto">Auto sync off</button>
       <button id="wait">Show waiting</button>
       <button id="mode">Open Usage app</button>
+      <button id="apps">Open Apps</button>
+      <button id="settings">Settings</button>
+      <button id="wireless">Wireless</button>
       <button id="bandStatus">Band status</button>
+      <button id="bandLogs">Logs</button>
     </div>
   </section>
   <section class="stack">
@@ -399,8 +433,14 @@ pre{max-height:260px;overflow:auto;background:var(--soft);border-radius:6px;padd
 <script>
 const $=id=>document.getElementById(id);
 let state={auto:false};
+const clawdRows=['...XXXXXXXXXXXX...','...XX.XXXXXX.XX...','.XXXXXXXXXXXXXXXX.','...XXXXXXXXXXXX...','....X.X....X.X....'];
+$('clawd').innerHTML=clawdRows.flatMap(r=>[...r].map(ch=>`<i style="opacity:${ch==='X'?1:0}"></i>`)).join('');
 function pct(v){return Number.isFinite(v)?Math.max(0,Math.min(100,Math.round(v))):null}
 function text(v,f='--'){return (v===undefined||v===null||v==='')?f:String(v)}
+function compactFromBandUsage(u){
+  if(!u)return null;
+  return {cu:u.current_used,cr:u.current_remaining,ri:u.current_resets_in,wu:u.weekly_used,wr:u.weekly_remaining,wi:u.weekly_resets_in,m:u.model,s:u.status,src:u.transport,err:u.error,stale:u.stale,d:u.demo};
+}
 function setPayload(p){
   p=p||{};
   const cu=pct(p.cu), wu=pct(p.wu), cr=pct(p.cr), wr=pct(p.wr);
@@ -422,12 +462,18 @@ function renderStatus(j){
   state.auto=!!j.state?.auto_enabled;
   $('auto').textContent=state.auto?'Auto sync on':'Auto sync off';
   const src=j.source_status, adv=j.adv_status, st=j.state||{};
+  const band=j.band_status?.body_json || j.band_status;
+  const bandUsage=compactFromBandUsage(band?.usage);
   const rows=[
     ['Claude bridge',src?.status==='ok'?'ok':(src?.error||'unknown')],
     ['ADV USB',adv?.device==='adv-bridge'?'ok':(adv?.error||'unknown')],
     ['ADV AP',adv?.ssid?adv.ssid:'-'],
     ['Band IP',adv?.band0_ip||adv?.mac_ip||'-'],
     ['Stations',adv?.stations??'-'],
+    ['Band health',band?.health || band?.error || '-'],
+    ['Band firmware',band?.firmware || '-'],
+    ['Band mode',band?.mode ?? '-'],
+    ['ADV staged',adv?.firmware_size?`${adv.firmware_size} B`:'-'],
     ['Auto sync',state.auto?`${st.interval_seconds}s`:'off'],
     ['Sync count',st.sync_count??0],
     ['Last error',st.last_error||'-'],
@@ -436,6 +482,7 @@ function renderStatus(j){
   $('overall').textContent=(src?.status==='ok'&&adv?.device==='adv-bridge')?'ready':'check';
   $('overall').className='badge '+((src?.status==='ok'&&adv?.device==='adv-bridge')?'ok':'warn');
   if(st.last_payload)setPayload(st.last_payload);
+  else if(bandUsage)setPayload(bandUsage);
   $('when').textContent=st.last_sync_at?new Date(st.last_sync_at*1000).toLocaleTimeString():'-';
   $('raw').textContent=JSON.stringify(j,null,2);
 }
@@ -445,7 +492,11 @@ $('refresh').onclick=refresh;$('sync').onclick=()=>sync(false);$('demo').onclick
 $('auto').onclick=async()=>{await api('/api/auto',{method:'POST',body:JSON.stringify({enabled:!state.auto,interval_seconds:60})});refresh()};
 $('wait').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/wait',{method:'POST',body:JSON.stringify({})}),null,2);refresh()};
 $('mode').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/mode',{method:'POST',body:JSON.stringify({mode:'usage'})}),null,2);refresh()};
+$('apps').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/mode',{method:'POST',body:JSON.stringify({mode:'menu'})}),null,2);refresh()};
+$('settings').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/mode',{method:'POST',body:JSON.stringify({mode:'settings'})}),null,2);refresh()};
+$('wireless').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/mode',{method:'POST',body:JSON.stringify({mode:'wireless'})}),null,2);refresh()};
 $('bandStatus').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/status'),null,2)};
+$('bandLogs').onclick=async()=>{$('raw').textContent=JSON.stringify(await api('/api/band/logs'),null,2)};
 refresh();setInterval(refresh,5000);
 </script>
 </body>
@@ -459,7 +510,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8788)
     parser.add_argument("--source", default=DEFAULT_SOURCE, help="cardputer-claude-usage bridge base URL")
     parser.add_argument("--bridge-token", default=os.environ.get("BRIDGE_TOKEN", ""))
-    parser.add_argument("--adv-port", default="/dev/cu.usbmodem11201")
+    parser.add_argument("--adv-port", default="auto")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
     parser.add_argument("--auto", action="store_true", help="start periodic sync immediately")

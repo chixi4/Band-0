@@ -227,39 +227,23 @@ static void handle_mode_keys(void)
 {
     key_event_t ev = gpio_key_get_event();
     if (ev.type == 1 && ev.event > 0) {
-        if (g_current_mode == APP_MODE_SETUP) {
-            /* Setup menu has its own key handling */
-            ui_handle_key_event(ev);
-        } else {
-            /* Global key commands */
-            if (ev.event == KEY_EVENT_CONFIRM && ev.is_long) {
-                /* Baseline long DOWN is a safe redraw/recovery hint. */
-                ui_request_redraw();
-                diag_log_event("I", "key", "long down redraw");
-            } else if (ev.event == KEY_EVENT_BACK && ev.is_long) {
-                /* Baseline long UP returns to the primary Usage surface. */
-                set_current_mode(APP_MODE_CLAUDE_USAGE);
-                ui_request_redraw();
-                diag_log_event("I", "key", "long up usage");
-            } else if (ev.event == KEY_EVENT_NEXT && !ev.is_long) {
-                /* Short press down = next mode */
-                if (g_current_mode < APP_MODE_SETUP) {
-                    set_current_mode(g_current_mode + 1);
-                } else {
-                    set_current_mode(APP_MODE_ANSWERS);
-                }
-                ui_request_redraw();
-                LOGI("mode -> %d", g_current_mode);
-            } else if (ev.event == KEY_EVENT_PREV && !ev.is_long) {
-                /* Short press up = previous mode */
-                if (g_current_mode > APP_MODE_ANSWERS) {
-                    set_current_mode(g_current_mode - 1);
-                } else {
-                    set_current_mode(APP_MODE_SETUP);
-                }
-                ui_request_redraw();
-                LOGI("mode -> %d", g_current_mode);
-            }
+        if (ui_handle_key_event(ev)) {
+            /* Handled by active UI screen */
+            return;
+        }
+        /* Fallback safety commands if the active UI did not consume it. */
+        if (ev.event == KEY_EVENT_CONFIRM && ev.is_long) {
+            set_current_mode(APP_MODE_APP_MENU);
+            ui_request_redraw();
+            diag_log_event("I", "key", "long down menu");
+        } else if (ev.event == KEY_EVENT_BACK && ev.is_long) {
+            set_current_mode(APP_MODE_CLOCK);
+            ui_request_redraw();
+            diag_log_event("I", "key", "long up clock");
+        } else if (ev.event == KEY_EVENT_NEXT && !ev.is_long) {
+            ui_request_redraw();
+        } else if (ev.event == KEY_EVENT_PREV && !ev.is_long) {
+            ui_request_redraw();
         }
     }
 }
@@ -298,20 +282,6 @@ static void handle_recovery_keys(void)
             xTaskCreate(delayed_reboot_task, "key_reboot", 2048, NULL, 6, NULL);
             return;
         }
-        if (up_since && !down && now - up_since > 5000000ULL) {
-            set_current_mode(APP_MODE_SAFE_STATUS);
-            ui_request_redraw();
-            diag_log_event("W", "key", "startup safe status");
-            startup_action_done = true;
-            return;
-        }
-        if (down_since && !up && now - down_since > 5000000ULL) {
-            set_current_mode(APP_MODE_CLAUDE_USAGE);
-            ui_request_redraw();
-            diag_log_event("I", "key", "startup usage");
-            startup_action_done = true;
-            return;
-        }
     }
 
     if (!startup_window && both_since && !runtime_reboot_done &&
@@ -346,15 +316,15 @@ void app_main(void)
         g_config.sleep_time_seconds = 0;  /* Keep the e-paper visible during demos/debug. */
         config_changed = true;
     }
-    if (g_config.boot_mode != APP_MODE_CLAUDE_USAGE) {
-        g_config.boot_mode = APP_MODE_CLAUDE_USAGE;
+    if (g_config.boot_mode != APP_MODE_CLOCK) {
+        g_config.boot_mode = APP_MODE_CLOCK;
         config_changed = true;
     }
     if (config_changed) {
         nvs_save_config(&g_config);
     }
-    g_current_mode = APP_MODE_CLAUDE_USAGE;
-    LOGI("boot mode pinned to Claude Usage app");
+    g_current_mode = APP_MODE_CLOCK;
+    LOGI("boot mode pinned to official clock shell");
 
     buzzer_init();
     wallpaper_init();
