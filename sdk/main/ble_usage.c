@@ -180,8 +180,9 @@ static int usage_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         bool ok = claude_usage_receive_json(payload, "ble");
         s_rx_count++;
         if (ok) {
-            set_current_mode(APP_MODE_CLAUDE_USAGE);
-            ui_request_redraw();
+            if (current_mode() == APP_MODE_CLAUDE_USAGE) {
+                ui_request_redraw();
+            }
             diag_log_event("I", "ble", "usage write ok");
             ble_usage_notify_status();
             return 0;

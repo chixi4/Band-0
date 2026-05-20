@@ -333,9 +333,10 @@ void jd79650_display_frame(const uint8_t *fb)
     ESP_LOGI(TAG, "display frame start");
 
     /* Recovered updater refresh path:
-       0x50=0x47, old plane 5000 zero bytes, new plane inverted 1bpp,
-       then command 0x12 to refresh. The app renderer keeps a 2bpp buffer
-       because original wallpaper payloads are 2bpp, so convert at the edge. */
+       0x50=0x47, old plane 5000 zero bytes, then command 0x12 to refresh.
+       On this panel's 0x13 plane, a set 1bpp bit renders black. The app
+       renderer keeps a 2bpp logical buffer where 00=white and non-zero=black,
+       so do not invert the converted stream at the hardware edge. */
     cmd(0x50);
     data(0x47);
 
@@ -343,7 +344,7 @@ void jd79650_display_frame(const uint8_t *fb)
     data_bulk_zeroes((JD79650_WIDTH * JD79650_HEIGHT) / 8);
 
     cmd(0x13);  /* New data write */
-    data_frame_2bpp_as_1bpp(fb, true);
+    data_frame_2bpp_as_1bpp(fb, false);
 
     int before = gpio_get_level(JD79650_BUSY_GPIO);
     cmd(0x12);

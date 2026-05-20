@@ -11,8 +11,8 @@ extern "C" {
 #define KEY_DOWN_GPIO   1   /* lower button, active-low, long=confirm/ok */
 
 /* Timing (microseconds) */
-#define KEY_DEBOUNCE_US  5000
-#define KEY_SHORT_MIN_US 50000
+#define KEY_DEBOUNCE_US  30000
+#define KEY_SHORT_MIN_US 80000
 #define KEY_LONG_MIN_US  800000
 
 /* Event codes */

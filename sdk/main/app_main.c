@@ -47,7 +47,6 @@ volatile bool      g_screen_sleeping = false;
 static void poll_network_and_time(void);
 static void handle_mode_keys(void);
 static void handle_recovery_keys(void);
-static void delayed_startup_redraw_task(void *arg);
 static void delayed_ble_start_task(void *arg);
 
 static uint64_t g_last_activity_time = 0;
@@ -152,15 +151,6 @@ static void run_screen_diag_once(void)
     delay_ms(2500);
 }
 #endif
-
-static void delayed_startup_redraw_task(void *arg)
-{
-    (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(8000));
-    ui_request_redraw();
-    LOGI("startup delayed redraw requested");
-    vTaskDelete(NULL);
-}
 
 static void delayed_reboot_task(void *arg)
 {
@@ -337,7 +327,6 @@ void app_main(void)
         run_screen_diag_once();
 #endif
         ui_request_redraw();
-        xTaskCreate(delayed_startup_redraw_task, "startup_redraw", 2048, NULL, 3, NULL);
         LOGI("display init done");
     } else {
         LOGW("display init failed, keeping network/debug alive: %d", display_ret);

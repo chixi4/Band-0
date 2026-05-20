@@ -26,6 +26,7 @@ static bool s_redraw_requested = true;
 typedef enum {
     SETTINGS_ROOT = 0,
     SETTINGS_WIRELESS_DETAIL = 1,
+    SETTINGS_CONFIRM_RESET = 2,
 } settings_page_t;
 
 typedef enum {
@@ -40,13 +41,21 @@ typedef enum {
 } app_row_t;
 
 typedef enum {
-    SETTINGS_LANGUAGE = 0,
+    SETTINGS_LOCK_NOW = 0,
+    SETTINGS_WIFI_TIME,
+    SETTINGS_SAVED_WIFI,
+    SETTINGS_WALLPAPER,
+    SETTINGS_WIFI_OTA,
+    SETTINGS_LANGUAGE,
     SETTINGS_SLEEP,
     SETTINGS_KEY_SOUND,
+    SETTINGS_LOCK_FLIP,
     SETTINGS_GUIDE,
-    SETTINGS_WIRELESS,
-    SETTINGS_UPDATE,
+    SETTINGS_RESET_MBTI,
+    SETTINGS_RESET_MERIT,
+    SETTINGS_FACTORY_RESET,
     SETTINGS_ABOUT,
+    SETTINGS_LOCAL_CONTROL,
     SETTINGS_COUNT,
 } settings_row_t;
 
@@ -59,10 +68,11 @@ typedef enum {
     WIRELESS_COUNT,
 } wireless_row_t;
 
-static int s_app_selected = APP_ROW_USAGE;
-static int s_settings_selected = SETTINGS_WIRELESS;
+static int s_app_selected = APP_ROW_BT_PAGER;
+static int s_settings_selected = SETTINGS_LOCK_NOW;
 static int s_wireless_selected = WIRELESS_WIFI;
 static settings_page_t s_settings_page = SETTINGS_ROOT;
+static settings_row_t s_settings_confirm_row = SETTINGS_RESET_MBTI;
 
 static bool s_answers_visible = false;
 static int s_answers_index = 0;
@@ -89,16 +99,6 @@ static const app_mode_t APP_MODES[APP_ROW_COUNT] = {
     APP_MODE_MBTI_GUIDE,
     APP_MODE_CLAUDE_USAGE,
     APP_MODE_SETUP,
-};
-
-static const char *SETTINGS_LABELS[SETTINGS_COUNT] = {
-    "Language",
-    "Sleep Time",
-    "Key Sound",
-    "Guide Pages",
-    "Wireless",
-    "Update",
-    "About Dot.",
 };
 
 static const char *WIRELESS_LABELS[WIRELESS_COUNT] = {
@@ -173,14 +173,17 @@ static void draw_header(const char *title)
     int w = text_width_px(title) + 14;
     int x = (EPD_WIDTH - w) / 2;
     if (x < 6) x = 6;
-    display_fill_rounded_rect(x, 6, w, 24, 4);
+    display_fill_rounded_rect(x, 7, w, 23, 5);
     draw_centered(12, title, TEXT_STYLE_INVERTED);
-    display_outline_rect(20, 42, 160, 1);
+}
+
+static void draw_list_title(const char *title)
+{
+    draw_text_clipped_style(12, 9, title, 16, TEXT_STYLE_TITLE);
 }
 
 static void draw_footer(const char *text)
 {
-    display_outline_rect(10, 172, 180, 1);
     draw_centered(181, text, TEXT_STYLE_NORMAL);
 }
 
@@ -281,36 +284,37 @@ static void draw_menu_row(int y, const char *label, const char *value,
 {
     int x = 16;
     int w = 168;
-    int h = 26;
+    int h = 22;
     if (selected) {
-        display_fill_rounded_rect(x, y, w, h, 4);
+        display_fill_rounded_rect(x, y, w, h, 6);
     } else {
-        display_outline_rect(x, y, w, h);
+        display_outline_rounded_rect(x, y, w, h, 6);
     }
 
-    int tx = x + 12;
+    int tx = x + 15;
     if (app_icon >= 0) {
-        draw_icon_for_app(app_icon, x + 8, y + 3, selected);
+        draw_icon_for_app(app_icon, x + 8, y + 1, selected);
         tx = x + 36;
     } else if (wireless_icon) {
-        draw_wireless_icon(x + 8, y + 3, selected);
+        draw_wireless_icon(x + 8, y + 1, selected);
         tx = x + 36;
     }
 
     int style = selected ? TEXT_STYLE_INVERTED : TEXT_STYLE_NORMAL;
-    draw_text_clipped_style(tx, y + 7, label, 13, style);
+    int label_limit = (value && value[0]) ? 12 : 17;
+    draw_text_clipped_style(tx, y + 5, label, label_limit, style);
     if (value && value[0]) {
         int vx = x + w - text_width_px(value) - 10;
         if (vx < tx + 72) vx = tx + 72;
-        draw_text_clipped_style(vx, y + 7, value, 7, style);
+        draw_text_clipped_style(vx, y + 5, value, 7, style);
     }
 }
 
-static int window_start(int selected, int total)
+static int window_start_for(int selected, int total, int visible)
 {
-    int start = selected - 1;
+    int start = selected - visible / 2;
     if (start < 0) start = 0;
-    if (start + 3 > total) start = total - 3;
+    if (start + visible > total) start = total - visible;
     if (start < 0) start = 0;
     return start;
 }
@@ -322,6 +326,58 @@ static const char *sleep_value(void)
     if (g_config.sleep_time_seconds == 30) return "30s";
     if (g_config.sleep_time_seconds == 60) return "60s";
     return "ON";
+}
+
+static const char *settings_label(settings_row_t row)
+{
+    switch (row) {
+    case SETTINGS_LOCK_NOW:      return "Lock Now";
+    case SETTINGS_WIFI_TIME:     return "Wi-Fi Time";
+    case SETTINGS_SAVED_WIFI:    return "Saved Wi-Fi";
+    case SETTINGS_WALLPAPER:     return "Wallpaper";
+    case SETTINGS_WIFI_OTA:      return "Wi-Fi OTA";
+    case SETTINGS_LANGUAGE:      return "Language";
+    case SETTINGS_SLEEP:         return "Sleep Time";
+    case SETTINGS_KEY_SOUND:     return "Key Sound";
+    case SETTINGS_LOCK_FLIP:     return "Lock Flip";
+    case SETTINGS_GUIDE:         return "Guide Pages";
+    case SETTINGS_RESET_MBTI:    return "Reset MBTI";
+    case SETTINGS_RESET_MERIT:   return "Reset Merit";
+    case SETTINGS_FACTORY_RESET: return "Factory Reset";
+    case SETTINGS_ABOUT:         return "System Version";
+    case SETTINGS_LOCAL_CONTROL: return "Local Control";
+    default:                     return "";
+    }
+}
+
+static const char *settings_value(settings_row_t row, const wifi_runtime_status_t *wifi)
+{
+    switch (row) {
+    case SETTINGS_WIFI_TIME:
+        return (wifi && wifi->sta_connected) ? "OK" : "";
+    case SETTINGS_WIFI_OTA:
+        return (wifi && wifi->sta_connected) ? "OK" : "";
+    case SETTINGS_LANGUAGE:
+        return g_config.language ? "EN" : "ZH";
+    case SETTINGS_SLEEP:
+        return sleep_value();
+    case SETTINGS_KEY_SOUND:
+        return g_config.key_sound ? "ON" : "OFF";
+    case SETTINGS_LOCK_FLIP:
+        return g_config.clock_warning ? "ON" : "OFF";
+    case SETTINGS_GUIDE:
+        return g_config.mbti_knowledge_hidden ? "OFF" : "ON";
+    case SETTINGS_LOCAL_CONTROL:
+        return "ADV";
+    default:
+        return "";
+    }
+}
+
+static bool settings_is_local_extension(settings_row_t row)
+{
+    (void)row;
+    return false;
 }
 
 static const char *bt_template_value(void)
@@ -341,7 +397,7 @@ static void draw_progress(int x, int y, int w, int pct)
 {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    display_outline_rect(x, y, w, 9);
+    display_outline_rounded_rect(x, y, w, 9, 1);
     int fill = (w - 2) * pct / 100;
     if (fill > 0) {
         display_fill_rounded_rect(x + 1, y + 1, fill, 7, 0);
@@ -392,7 +448,7 @@ static int pct_for_bar(int pct)
 static void draw_usage_badge(int x, int y, const char *label)
 {
     int w = 66;
-    display_outline_rect(x, y, w, 16);
+    display_outline_rounded_rect(x, y, w, 16, 2);
     draw_text_clipped(x + 6, y + 3, label, 7);
 }
 
@@ -436,7 +492,6 @@ static void draw_usage_footer_text(const claude_usage_state_t *usage)
         strlcpy(footer, "Live data", sizeof(footer));
     }
 
-    display_outline_rect(10, 172, 180, 1);
     int tw = text_width_px(footer);
     int x = (EPD_WIDTH - tw - 14) / 2;
     if (x < 10) x = 10;
@@ -460,6 +515,30 @@ static void enter_app(app_row_t row)
             s_settings_page = SETTINGS_ROOT;
         }
         ui_request_redraw();
+    }
+}
+
+static void enter_wireless_row(wireless_row_t row, bool detail)
+{
+    if (row < 0 || row >= WIRELESS_COUNT) return;
+    s_wireless_selected = row;
+    s_settings_page = detail ? SETTINGS_WIRELESS_DETAIL : SETTINGS_ROOT;
+    set_current_mode(APP_MODE_WIRELESS);
+    ui_request_redraw();
+}
+
+static void perform_settings_reset(settings_row_t row)
+{
+    if (row == SETTINGS_RESET_MBTI) {
+        g_config.mbti_type = 0;
+        s_mbti_index = 0;
+        nvs_save_config(&g_config);
+    } else if (row == SETTINGS_RESET_MERIT) {
+        g_config.merit_count = 0;
+        nvs_save_config(&g_config);
+    } else if (row == SETTINGS_FACTORY_RESET) {
+        nvs_reset_config();
+        g_config = nvs_load_config();
     }
 }
 
@@ -511,7 +590,10 @@ bool ui_handle_key_event(key_event_t ev)
     }
 
     if (back) {
-        if (mode == APP_MODE_SETUP && s_settings_page == SETTINGS_WIRELESS_DETAIL) {
+        if (mode == APP_MODE_SETUP && s_settings_page != SETTINGS_ROOT) {
+            s_settings_page = SETTINGS_ROOT;
+            ui_request_redraw();
+        } else if (mode == APP_MODE_WIRELESS && s_settings_page == SETTINGS_WIRELESS_DETAIL) {
             s_settings_page = SETTINGS_ROOT;
             ui_request_redraw();
         } else if (mode == APP_MODE_WIRELESS) {
@@ -590,13 +672,32 @@ bool ui_handle_key_event(key_event_t ev)
         return true;
 
     case APP_MODE_SETUP:
+        if (s_settings_page == SETTINGS_CONFIRM_RESET) {
+            if (ok) {
+                perform_settings_reset(s_settings_confirm_row);
+                s_settings_page = SETTINGS_ROOT;
+                ui_request_redraw();
+                return true;
+            }
+            return true;
+        }
         if (short_up) {
             s_settings_selected = (s_settings_selected + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
         } else if (short_down) {
             s_settings_selected = (s_settings_selected + 1) % SETTINGS_COUNT;
         } else if (ok) {
-            if (s_settings_selected == SETTINGS_LANGUAGE) {
-                g_config.language = 1;
+            if (s_settings_selected == SETTINGS_LOCK_NOW) {
+                set_current_mode(APP_MODE_CLOCK);
+            } else if (s_settings_selected == SETTINGS_WIFI_TIME) {
+                enter_wireless_row(WIRELESS_WIFI, true);
+            } else if (s_settings_selected == SETTINGS_SAVED_WIFI) {
+                enter_wireless_row(WIRELESS_WIFI, true);
+            } else if (s_settings_selected == SETTINGS_WALLPAPER) {
+                set_current_mode(APP_MODE_CLOCK);
+            } else if (s_settings_selected == SETTINGS_WIFI_OTA) {
+                enter_wireless_row(WIRELESS_OTA, true);
+            } else if (s_settings_selected == SETTINGS_LANGUAGE) {
+                g_config.language = g_config.language ? 0 : 1;
                 nvs_save_config(&g_config);
             } else if (s_settings_selected == SETTINGS_SLEEP) {
                 cycle_sleep_time();
@@ -604,14 +705,25 @@ bool ui_handle_key_event(key_event_t ev)
             } else if (s_settings_selected == SETTINGS_KEY_SOUND) {
                 g_config.key_sound = !g_config.key_sound;
                 nvs_save_config(&g_config);
+            } else if (s_settings_selected == SETTINGS_LOCK_FLIP) {
+                g_config.clock_warning = !g_config.clock_warning;
+                nvs_save_config(&g_config);
             } else if (s_settings_selected == SETTINGS_GUIDE) {
                 g_config.mbti_knowledge_hidden = !g_config.mbti_knowledge_hidden;
                 nvs_save_config(&g_config);
-            } else if (s_settings_selected == SETTINGS_WIRELESS) {
-                set_current_mode(APP_MODE_WIRELESS);
-            } else if (s_settings_selected == SETTINGS_UPDATE) {
-                set_current_mode(APP_MODE_WIRELESS);
-                s_wireless_selected = WIRELESS_OTA;
+            } else if (s_settings_selected == SETTINGS_RESET_MBTI) {
+                s_settings_confirm_row = SETTINGS_RESET_MBTI;
+                s_settings_page = SETTINGS_CONFIRM_RESET;
+            } else if (s_settings_selected == SETTINGS_RESET_MERIT) {
+                s_settings_confirm_row = SETTINGS_RESET_MERIT;
+                s_settings_page = SETTINGS_CONFIRM_RESET;
+            } else if (s_settings_selected == SETTINGS_FACTORY_RESET) {
+                s_settings_confirm_row = SETTINGS_FACTORY_RESET;
+                s_settings_page = SETTINGS_CONFIRM_RESET;
+            } else if (s_settings_selected == SETTINGS_ABOUT) {
+                set_current_mode(APP_MODE_SAFE_STATUS);
+            } else if (s_settings_selected == SETTINGS_LOCAL_CONTROL) {
+                enter_wireless_row(WIRELESS_LOCAL_API, false);
             }
         } else {
             break;
@@ -664,38 +776,58 @@ void ui_draw_clock_screen(bool english)
 static void draw_app_menu(void)
 {
     display_begin_frame();
-    draw_header("APPLICATIONS");
-    int start = window_start(s_app_selected, APP_ROW_COUNT);
-    for (int slot = 0; slot < 3; slot++) {
+    draw_list_title("Applications");
+    int start = window_start_for(s_app_selected, APP_ROW_COUNT, 5);
+    for (int slot = 0; slot < 5; slot++) {
         int idx = start + slot;
         const char *value = "";
         if (idx == APP_ROW_USAGE) value = "LIVE";
         else if (idx == APP_ROW_MERIT) value = "108";
         else if (idx == APP_ROW_BT_PAGER) value = "OFF";
-        draw_menu_row(54 + slot * 33, APP_LABELS[idx], value, idx == s_app_selected, idx, false);
+        draw_menu_row(37 + slot * 27, APP_LABELS[idx], value, idx == s_app_selected, idx, false);
     }
     draw_footer("Press=Switch / Hold=OK");
+    ui_flush_display();
+}
+
+static void draw_settings_confirm(void)
+{
+    display_begin_frame();
+    draw_header("CONFIRM");
+    draw_centered(55, settings_label(s_settings_confirm_row), TEXT_STYLE_NORMAL);
+    if (s_settings_confirm_row == SETTINGS_FACTORY_RESET) {
+        draw_centered(84, "Reset local config", TEXT_STYLE_NORMAL);
+        draw_centered(106, "Wi-Fi stays usable", TEXT_STYLE_NORMAL);
+    } else {
+        draw_centered(88, "Confirm Reset", TEXT_STYLE_NORMAL);
+    }
+    display_fill_rounded_rect(42, 132, 116, 22, 4);
+    draw_centered(137, "HOLD OK", TEXT_STYLE_INVERTED);
+    draw_footer("Hold BACK Cancel");
     ui_flush_display();
 }
 
 void ui_draw_setup_menu(bool english)
 {
     (void)english;
+    if (s_settings_page == SETTINGS_CONFIRM_RESET) {
+        draw_settings_confirm();
+        return;
+    }
+
+    wifi_runtime_status_t wifi;
+    wifi_get_runtime_status(&wifi);
+
     display_begin_frame();
-    draw_header("SETTINGS");
-    int start = window_start(s_settings_selected, SETTINGS_COUNT);
-    for (int slot = 0; slot < 3; slot++) {
+    draw_list_title("Settings");
+    int start = window_start_for(s_settings_selected, SETTINGS_COUNT, 5);
+    for (int slot = 0; slot < 5; slot++) {
         int idx = start + slot;
-        const char *value = "";
-        if (idx == SETTINGS_LANGUAGE) value = "EN";
-        else if (idx == SETTINGS_SLEEP) value = sleep_value();
-        else if (idx == SETTINGS_KEY_SOUND) value = g_config.key_sound ? "ON" : "OFF";
-        else if (idx == SETTINGS_GUIDE) value = g_config.mbti_knowledge_hidden ? "HIDE" : "SHOW";
-        else if (idx == SETTINGS_WIRELESS) value = "ADV";
-        else if (idx == SETTINGS_UPDATE) value = "OK";
-        else if (idx == SETTINGS_ABOUT) value = "1.2.6+";
-        draw_menu_row(54 + slot * 33, SETTINGS_LABELS[idx], value,
-                      idx == s_settings_selected, -1, idx == SETTINGS_WIRELESS);
+        settings_row_t row = (settings_row_t)idx;
+        draw_menu_row(37 + slot * 27, settings_label(row),
+                      settings_value(row, &wifi),
+                      idx == s_settings_selected, -1,
+                      settings_is_local_extension(row));
     }
     draw_footer("Press=Switch / Hold=OK");
     ui_flush_display();
@@ -756,9 +888,9 @@ static void draw_wireless_menu(void)
     ble_usage_get_status(&ble);
 
     display_begin_frame();
-    draw_header("WIRELESS");
-    int start = window_start(s_wireless_selected, WIRELESS_COUNT);
-    for (int slot = 0; slot < 3; slot++) {
+    draw_list_title("Wireless");
+    int start = window_start_for(s_wireless_selected, WIRELESS_COUNT, 5);
+    for (int slot = 0; slot < 5; slot++) {
         int idx = start + slot;
         const char *value = "";
         if (idx == WIRELESS_WIFI) value = wifi.sta_connected ? "ADV" : "SETUP";
@@ -766,7 +898,7 @@ static void draw_wireless_menu(void)
         else if (idx == WIRELESS_OTA) value = "READY";
         else if (idx == WIRELESS_LOGS) value = "OK";
         else if (idx == WIRELESS_BLE) value = ble.ready ? "ON" : "OFF";
-        draw_menu_row(54 + slot * 33, WIRELESS_LABELS[idx], value,
+        draw_menu_row(37 + slot * 27, WIRELESS_LABELS[idx], value,
                       idx == s_wireless_selected, -1, idx == WIRELESS_WIFI);
     }
     draw_footer("Hold BACK to Settings");
@@ -871,7 +1003,6 @@ void ui_draw_claude_usage(bool english)
     draw_clawd_icon(8, 7, 2, false);
     draw_centered(11, "Usage", TEXT_STYLE_NORMAL);
     draw_mini_battery_unknown(166, 8);
-    display_outline_rect(10, 34, 180, 1);
 
     if (!usage.has_data && usage.error[0]) {
         draw_centered(58, "Usage Error", TEXT_STYLE_NORMAL);
@@ -909,7 +1040,9 @@ void ui_draw_safe_status(bool english)
     draw_text_clipped(12, 72, line, 20);
     snprintf(line, sizeof(line), "usage %s", usage.has_data ? usage.status : "waiting");
     draw_text_clipped(12, 94, line, 20);
-    draw_text_clipped(12, 122, "Both 10s: reboot", 20);
+    snprintf(line, sizeof(line), "invert %s", display_get_inverted() ? "ON" : "off");
+    draw_text_clipped(12, 116, line, 20);
+    draw_text_clipped(12, 138, "Both 10s: reboot", 20);
     draw_footer("Long BACK Clock");
     ui_flush_display();
 }
