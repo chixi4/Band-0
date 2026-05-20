@@ -34,6 +34,7 @@
 #include "diag_log.h"
 #include "debug_server.h"
 #include "nvs_utils.h"
+#include "power_monitor.h"
 
 static const char *TAG = "band0";
 
@@ -317,6 +318,7 @@ void app_main(void)
     LOGI("boot mode pinned to official clock shell");
 
     buzzer_init();
+    power_monitor_init();
     wallpaper_init();
     claude_usage_init();
 

@@ -17,6 +17,7 @@
 #include "display_epd.h"
 #include "gpio_key.h"
 #include "nvs_utils.h"
+#include "power_monitor.h"
 #include "ui_render.h"
 #include "wallpaper.h"
 #include "wifi_config.h"
@@ -404,12 +405,29 @@ static void draw_progress(int x, int y, int w, int pct)
     }
 }
 
-static void draw_mini_battery_unknown(int x, int y)
+static void draw_mini_battery_icon(int x, int y, const battery_state_t *battery)
 {
-    display_outline_rect(x, y, 22, 10);
-    pixel_block(x + 22, y + 3, 2, 4, true);
-    for (int i = 0; i < 4; i++) {
-        display_outline_rect(x + 3 + i * 4, y + 3, 2, 4);
+    display_outline_rect(x, y, 20, 10);
+    pixel_block(x + 20, y + 3, 2, 4, true);
+
+    int bars = 0;
+    if (battery && battery->charging) {
+        bars = 4;
+    } else if (battery && battery->percentage >= 0) {
+        bars = (battery->percentage + 24) / 25;
+        if (bars < 0) bars = 0;
+        if (bars > 4) bars = 4;
+    }
+
+    for (int i = 0; i < bars && i < 4; i++) {
+        int bx = x + 2 + i * 4;
+        pixel_block(bx, y + 2, 3, 6, true);
+    }
+
+    if (battery && battery->charging) {
+        display_draw_pixel(x + 10, y + 2, false);
+        display_draw_pixel(x + 9, y + 5, false);
+        display_draw_pixel(x + 12, y + 5, false);
     }
 }
 
@@ -445,21 +463,21 @@ static int pct_for_bar(int pct)
     return pct;
 }
 
-static void draw_usage_badge(int x, int y, const char *label)
+static void draw_usage_badge(int box_x, int box_y, const char *label, int tx_off, int ty_off)
 {
-    int w = 66;
-    display_outline_rounded_rect(x, y, w, 16, 2);
-    draw_text_clipped(x + 6, y + 3, label, 7);
+    display_outline_rounded_rect(box_x, box_y, 66, 17, 2);
+    draw_text_clipped(box_x + 6 + tx_off, box_y + 3 + ty_off, label, 8);
 }
 
-static void draw_usage_section(int y, const char *label, int used_pct, int remaining_pct,
-                               const char *resets_in)
+static void draw_usage_section(int pct_x, int pct_y, int section_y, const char *label, int badge_x,
+                               int tx_off, int ty_off,
+                               int used_pct, int remaining_pct, const char *resets_in)
 {
     char pct[8];
     usage_pct_text(used_pct, pct, sizeof(pct));
-    draw_text_clipped(12, y, pct, 4);
-    draw_usage_badge(122, y - 1, label);
-    draw_progress(12, y + 20, 176, pct_for_bar(used_pct));
+    draw_text_clipped(pct_x, pct_y, pct, 4);
+    draw_usage_badge(badge_x, section_y - 1, label, tx_off, ty_off);
+    draw_progress(12, section_y + 20, 176, pct_for_bar(used_pct));
 
     char detail[28];
     if (remaining_pct >= 0 && resets_in && resets_in[0]) {
@@ -472,7 +490,7 @@ static void draw_usage_section(int y, const char *label, int used_pct, int remai
     } else {
         strlcpy(detail, "Resets in --", sizeof(detail));
     }
-    draw_text_clipped(12, y + 34, detail, 20);
+    draw_text_clipped(12, section_y + 34, detail, 20);
 }
 
 static void draw_usage_footer_text(const claude_usage_state_t *usage)
@@ -1002,7 +1020,8 @@ void ui_draw_claude_usage(bool english)
     display_begin_frame();
     draw_clawd_icon(8, 7, 2, false);
     draw_centered(11, "Usage", TEXT_STYLE_NORMAL);
-    draw_mini_battery_unknown(166, 8);
+    battery_state_t battery = power_monitor_get_battery();
+    draw_mini_battery_icon(165, 8, &battery);
 
     if (!usage.has_data && usage.error[0]) {
         draw_centered(58, "Usage Error", TEXT_STYLE_NORMAL);
@@ -1015,9 +1034,9 @@ void ui_draw_claude_usage(bool english)
         display_fill_rounded_rect(44, 134, 112, 22, 4);
         draw_centered(139, "SYNC NOW", TEXT_STYLE_INVERTED);
     } else {
-        draw_usage_section(46, "Current", usage.current_used, usage.current_remaining,
+        draw_usage_section(12, 45, 45, "Current", 122, -3, -1, usage.current_used, usage.current_remaining,
                            usage.current_resets_in);
-        draw_usage_section(104, "Weekly", usage.weekly_used, usage.weekly_remaining,
+        draw_usage_section(12, 101, 101, "Weekly", 122, 1, -1, usage.weekly_used, usage.weekly_remaining,
                            usage.weekly_resets_in);
     }
 

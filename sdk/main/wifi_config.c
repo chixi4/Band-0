@@ -49,6 +49,7 @@ static esp_netif_t *s_sta_netif = NULL;
 static esp_netif_t *s_ap_netif = NULL;
 static int s_retry_count = 0;
 static int s_runtime_state = -2;  /* -2=not tried, 0=STA connected, 1=portal */
+static bool s_retry_forever_after_connected = false;
 
 static void log_wifi_error(const char *step, esp_err_t err)
 {
@@ -78,7 +79,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         /* Connection is started explicitly after STA config is installed.
            Auto-connecting here races esp_wifi_set_config() after set_mode(). */
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_count < 3) {
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        if (s_retry_forever_after_connected) {
+            s_retry_count++;
+            ESP_LOGW(TAG, "Wi-Fi disconnect, retry %d", s_retry_count);
+            diag_log_event("W", "wifi", "reconnect retry %d", s_retry_count);
+            esp_wifi_connect();
+        } else if (s_retry_count < 3) {
             s_retry_count++;
             ESP_LOGW(TAG, "Wi-Fi disconnect, retry %d/3", s_retry_count);
             esp_wifi_connect();
@@ -90,6 +97,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         diag_log_event("I", "wifi", "got ip " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count = 0;
+        s_retry_forever_after_connected = true;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -148,6 +156,7 @@ int wifi_connect_or_portal(void)
             strlcpy((char *)wifi_cfg.sta.password, pwd, sizeof(wifi_cfg.sta.password));
         }
         s_retry_count = 0;
+        s_retry_forever_after_connected = false;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
         err = esp_wifi_set_mode(WIFI_MODE_STA);
         if (err != ESP_OK) {
@@ -183,6 +192,7 @@ int wifi_connect_or_portal(void)
 start_portal:
     /* Fallback: start SoftAP portal */
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_disconnect());
+    s_retry_forever_after_connected = false;
     wifi_config_t ap_cfg = {
         .ap = {
             .ssid = BAND0_AP_SSID,
@@ -311,6 +321,8 @@ int wifi_finalize_ota_request_on_main_boot(void)
 
     int32_t attempt_id = 0;
     int32_t armed_attempt = 0;
+    int32_t result = 0x7fffffff;
+    int32_t result_for = 0;
     char url[256] = {0};
     char fail_reason[96] = {0};
     size_t len = sizeof(url);
@@ -318,6 +330,8 @@ int wifi_finalize_ota_request_on_main_boot(void)
     len = sizeof(fail_reason);
     bool has_fail = (nvs_get_str(nvs, KEY_FAIL, fail_reason, &len) == ESP_OK && fail_reason[0]);
     bool has_armed = (nvs_get_i32(nvs, KEY_ARMED, &armed_attempt) == ESP_OK && armed_attempt > 0);
+    bool has_result = (nvs_get_i32(nvs, KEY_RESULT, &result) == ESP_OK);
+    bool has_result_for = (nvs_get_i32(nvs, KEY_RESULT_FOR, &result_for) == ESP_OK);
 
     if (!has_armed && !(has_url && has_fail)) {
         nvs_close(nvs);
@@ -326,18 +340,41 @@ int wifi_finalize_ota_request_on_main_boot(void)
 
     if (has_armed) {
         attempt_id = armed_attempt;
+        if (!has_result || !has_result_for || result_for != armed_attempt) {
+            const char *keys[] = {
+                KEY_URL, KEY_PASSWORD, KEY_SSID_1, KEY_PWD_1,
+                KEY_SSID_2, KEY_PWD_2, KEY_ARMED,
+            };
+            for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+                nvs_erase_key(nvs, keys[i]);
+            }
+            nvs_set_i32(nvs, KEY_RESULT, -2);
+            nvs_set_i32(nvs, KEY_RESULT_FOR, armed_attempt);
+            nvs_set_str(nvs, KEY_FAIL, "updater did not report result");
+            nvs_commit(nvs);
+            nvs_close(nvs);
+            ESP_LOGW(TAG, "OTA armed attempt reached main without updater result (attempt=%ld)",
+                     (long)armed_attempt);
+            diag_log_event("W", "ota", "updater missing result=%ld", (long)armed_attempt);
+            return -2;
+        }
     } else {
         nvs_get_i32(nvs, KEY_ATTEMPT, &attempt_id);
     }
 
     const char *keys[] = {
         KEY_URL, KEY_PASSWORD, KEY_SSID_1, KEY_PWD_1,
-        KEY_SSID_2, KEY_PWD_2, KEY_FAIL, KEY_ARMED,
+        KEY_SSID_2, KEY_PWD_2, KEY_ARMED,
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         nvs_erase_key(nvs, keys[i]);
     }
-    nvs_set_i32(nvs, KEY_RESULT, 0);
+    if (has_result && result == 0) {
+        nvs_erase_key(nvs, KEY_FAIL);
+    }
+    if (!has_result) {
+        nvs_set_i32(nvs, KEY_RESULT, has_fail ? -1 : 0);
+    }
     nvs_set_i32(nvs, KEY_RESULT_FOR, attempt_id);
     nvs_commit(nvs);
     nvs_close(nvs);

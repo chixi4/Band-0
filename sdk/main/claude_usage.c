@@ -18,6 +18,7 @@ static const char *TAG = "claude_usage";
 static claude_usage_state_t s_usage;
 static char s_hint[48] = "Open bridge :8788";
 static bool s_loading_cached_payload = false;
+static bool s_visual_changed = false;
 
 #define NVS_USAGE_NS "usage"
 #define KEY_LAST_PAYLOAD "last"
@@ -99,6 +100,24 @@ static void usage_store_payload(cJSON *payload)
     cJSON_free(raw);
 }
 
+static bool str_changed(const char *a, const char *b)
+{
+    return strcmp(a ? a : "", b ? b : "") != 0;
+}
+
+static bool usage_visual_differs(const claude_usage_state_t *a, const claude_usage_state_t *b)
+{
+    return a->current_used != b->current_used ||
+           a->current_remaining != b->current_remaining ||
+           a->weekly_used != b->weekly_used ||
+           a->weekly_remaining != b->weekly_remaining ||
+           str_changed(a->status, b->status) ||
+           str_changed(a->error, b->error) ||
+           a->stale != b->stale ||
+           a->is_demo != b->is_demo ||
+           a->has_data != b->has_data;
+}
+
 static bool usage_load_payload(char *out, size_t out_len)
 {
     nvs_handle_t nvs;
@@ -112,6 +131,7 @@ static bool usage_load_payload(char *out, size_t out_len)
 
 void claude_usage_reset(const char *hint)
 {
+    claude_usage_state_t before = s_usage;
     memset(&s_usage, 0, sizeof(s_usage));
     s_usage.current_used = -1;
     s_usage.current_remaining = -1;
@@ -123,6 +143,7 @@ void claude_usage_reset(const char *hint)
     if (hint && hint[0]) {
         strlcpy(s_hint, hint, sizeof(s_hint));
     }
+    s_visual_changed = usage_visual_differs(&before, &s_usage);
 }
 
 void claude_usage_init(void)
@@ -146,10 +167,14 @@ bool claude_usage_receive_json(const char *line, const char *transport)
 {
     if (!line || !line[0]) return false;
 
+    claude_usage_state_t before = s_usage;
+    s_visual_changed = false;
+
     cJSON *root = cJSON_Parse(line);
     if (!root) {
         strlcpy(s_usage.error, "Bad usage JSON", sizeof(s_usage.error));
         strlcpy(s_usage.status, "error", sizeof(s_usage.status));
+        s_visual_changed = usage_visual_differs(&before, &s_usage);
         ESP_LOGW(TAG, "bad JSON from %s", transport ? transport : "?");
         return false;
     }
@@ -208,13 +233,19 @@ bool claude_usage_receive_json(const char *line, const char *transport)
         strlcpy(s_usage.status, "error", sizeof(s_usage.status));
     }
 
+    s_visual_changed = usage_visual_differs(&before, &s_usage);
     ESP_LOGI(TAG, "usage payload: current=%d weekly=%d status=%s via=%s",
              s_usage.current_used, s_usage.weekly_used, s_usage.status, s_usage.last_transport);
-    if (s_usage.has_data || s_usage.error[0]) {
+    if ((s_usage.has_data || s_usage.error[0]) && s_visual_changed) {
         usage_store_payload(data);
     }
     cJSON_Delete(root);
     return s_usage.has_data || s_usage.error[0];
+}
+
+bool claude_usage_visual_changed(void)
+{
+    return s_visual_changed;
 }
 
 void claude_usage_get_state(claude_usage_state_t *out)

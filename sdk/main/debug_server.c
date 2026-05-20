@@ -22,6 +22,7 @@
 #include "diag_log.h"
 #include "debug_server.h"
 #include "display_epd.h"
+#include "power_monitor.h"
 #include "ui_render.h"
 #include "wifi_config.h"
 
@@ -118,6 +119,17 @@ static void add_ble_json(cJSON *root)
     cJSON_AddNumberToObject(b, "rx_count", ble.rx_count);
     cJSON_AddNumberToObject(b, "notify_count", ble.notify_count);
     cJSON_AddStringToObject(b, "last_error", ble.last_error);
+}
+
+static void add_power_json(cJSON *root)
+{
+    battery_state_t battery = power_monitor_get_battery();
+    cJSON *p = cJSON_AddObjectToObject(root, "power");
+    cJSON_AddNumberToObject(p, "battery_pct", battery.percentage);
+    cJSON_AddBoolToObject(p, "charging", battery.charging);
+    cJSON_AddNumberToObject(p, "adc_mv", power_monitor_get_adc_mv());
+    cJSON_AddNumberToObject(p, "cell_mv", power_monitor_get_cell_mv());
+    cJSON_AddStringToObject(p, "source", "adc1_ch2_gpio2_stock_curve");
 }
 
 static void add_heap_json(cJSON *root)
@@ -276,6 +288,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     add_wifi_json(root);
     add_ble_json(root);
     add_usage_json(root);
+    add_power_json(root);
     cJSON *ota = build_ota_status_json();
     if (ota) cJSON_AddItemToObject(root, "ota", ota);
     add_heap_json(root);
@@ -292,6 +305,7 @@ static esp_err_t health_get_handler(httpd_req_t *req)
     add_health_json(root);
     add_wifi_json(root);
     add_ble_json(root);
+    add_power_json(root);
     add_heap_json(root);
     esp_err_t ret = send_json(req, "200 OK", root);
     cJSON_Delete(root);
@@ -358,7 +372,7 @@ static esp_err_t usage_push_handler(httpd_req_t *req)
 
     bool ok = claude_usage_receive_json(body, "wifi");
     if (ok) {
-        if (current_mode() == APP_MODE_CLAUDE_USAGE) {
+        if (current_mode() == APP_MODE_CLAUDE_USAGE && claude_usage_visual_changed()) {
             ui_request_redraw();
         }
         ble_usage_notify_status();
@@ -368,6 +382,7 @@ static esp_err_t usage_push_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "ok", ok);
     add_usage_json(root);
+    add_power_json(root);
     esp_err_t ret = send_json(req, ok ? "200 OK" : "400 Bad Request", root);
     cJSON_Delete(root);
     return ret;

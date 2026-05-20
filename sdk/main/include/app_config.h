@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define BAND0_FIRMWARE_VERSION "1.2.6-local-ui6"
+#define BAND0_FIRMWARE_VERSION "1.2.6-local-ui11"
 
 /* Baseline policy: keep the control plane quiet and memory-rich by default.
  * BLE and buzzer can be enabled later once the Wi-Fi OTA path is proven stable.

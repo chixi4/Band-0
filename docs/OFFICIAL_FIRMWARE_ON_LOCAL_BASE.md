@@ -27,7 +27,7 @@ FreeRTOS startup, globals, NVS assumptions, cloud logic, and UI renderer.
   - Fits `updater`, with `98944` bytes spare.
 - Current local base image:
   - Path: `sdk/build/Quote_0_ESP8684_IDF.bin`
-  - Current ui4 size: `893600` bytes
+  - Current ui9 size: `906656` bytes
   - Fits `main`, but does not fit `updater`.
 
 ## What Is Feasible
@@ -92,21 +92,30 @@ bitmap icons, and the same two-button interaction grammar.
 
 Built and OTA-verified on 2026-05-20:
 
-- Active firmware: `1.2.6-local-ui6`
 - Image: `sdk/build/Quote_0_ESP8684_IDF.bin`
-- Size: `895200` bytes
-- SHA256: `05399dfcfa173c54b62fef2d559cb95a17c1c89784771ae6703bafaf91e21190`
-- OTA result: attempt `23`, success, booted back into `main`
+- Active firmware: `1.2.6-local-ui9`
+- Size: `906656` bytes
+- SHA256: `42104342294703969dfc19cf1c45c44361ee4c5a59ae5f4f189573717c419660`
+- OTA result: attempt `28`, success, booted back into `main`
 - Runtime verification:
   - `/api/status` reports `runtime: local-base`
   - `official_reference: 1.2.6`
   - health `ok`
   - display ready and non-inverted
   - Wi-Fi connected to `ADV 2.4G`
+  - battery is read from the stock firmware ADC path: ADC1 channel 2 / GPIO2,
+    doubled to cell voltage, then mapped with the recovered stock voltage curve
+  - verified sample: `battery_pct=64`, `adc_mv≈1921`, `cell_mv≈3842`
   - Usage push no longer forces a jump into the Usage app when another page is
     active
+  - Usage page redraw is now gated by visible quota/status changes; reset
+    countdown-only updates are accepted into state but do not refresh the EPD
+  - after a successful STA connection, Wi-Fi disconnects retry indefinitely so
+    ADV restarts do not strand the device offline again
+  - OTA finalization no longer fabricates success if the updater does not write
+    a matching result for the armed attempt
 
-UI changes in `ui6` intentionally keep the official surface dominant:
+UI changes through `ui9` intentionally keep the official surface dominant:
 
 - The Settings page now uses official-like rows: `Lock Now`, `Wi-Fi Time`,
   `Saved Wi-Fi`, `Wallpaper`, `Wi-Fi OTA`, `Language`, `Sleep Time`,
@@ -116,6 +125,8 @@ UI changes in `ui6` intentionally keep the official surface dominant:
 - Reset actions use a confirmation screen instead of executing immediately.
 - Local wireless diagnostics remain available, but they are behind Settings
   instead of being treated as a primary app.
+- Usage page order is restored to percent-left / badge-right. Current uses the
+  right badge at `x=122`; Weekly uses `x=124`, two pixels farther right.
 - The mockup reference is generated at
   `build/ui_mockups/official_firmware_interpretation.png`.
 
